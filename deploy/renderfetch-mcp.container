@@ -1,0 +1,27 @@
+# Podman Quadlet unit (systemd-native). Install:
+#   ./build.sh                                      # build localhost/renderfetch-mcp:latest
+#   cp deploy/renderfetch-mcp.container ~/.config/containers/systemd/
+#   cp .env ~/.config/renderfetch-mcp.env
+#   systemctl --user daemon-reload && systemctl --user start renderfetch-mcp
+[Unit]
+Description=renderfetch-mcp — headless web-fetch MCP server
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=localhost/renderfetch-mcp:latest
+ContainerName=renderfetch-mcp
+EnvironmentFile=%h/.config/renderfetch-mcp.env
+Volume=renderfetch-data:/data
+PublishPort=127.0.0.1:10120:8080
+DropCapability=ALL
+NoNewPrivileges=true
+ShmSize=2g
+PodmanArgs=--init
+
+[Service]
+Restart=on-failure
+TimeoutStartSec=120
+
+[Install]
+WantedBy=default.target

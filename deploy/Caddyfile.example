@@ -1,0 +1,5 @@
+# Caddy reverse-proxy example for renderfetch-mcp.
+# Caddy gets a TLS cert automatically and streams responses out of the box.
+mcp.example.com {
+    reverse_proxy 127.0.0.1:10120
+}

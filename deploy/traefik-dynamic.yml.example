@@ -1,0 +1,15 @@
+# Traefik v3 dynamic-config example for renderfetch-mcp.
+# Assumes an entryPoint "websecure" (:443) and an ACME resolver "le".
+http:
+  routers:
+    renderfetch:
+      rule: "Host(`mcp.example.com`)"
+      entryPoints: ["websecure"]
+      service: renderfetch
+      tls:
+        certResolver: le
+  services:
+    renderfetch:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:10120"
