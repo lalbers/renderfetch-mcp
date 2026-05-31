@@ -1,0 +1,16 @@
+.git
+.github
+node_modules
+dist
+test
+data
+*.log
+*.md
+LICENSE
+.env
+.env.example
+.gitignore
+.dockerignore
+compose.yaml
+deploy
+scripts
