@@ -2,29 +2,29 @@
 
 **Give Claude a real browser.** A small, self-hosted [MCP](https://modelcontextprotocol.io)
 server that fetches web pages with headless Chromium, returns clean Markdown, and
-screens everything for prompt injection — with OAuth built in, so it works as a
-**claude.ai custom connector** out of the box (and with Claude Code).
+screens everything for prompt injection. With OAuth built in, so it works as a
+claude.ai custom connector out of the box (and with Claude Code).
 
 ![license](https://img.shields.io/badge/license-MIT-blue) ![node](https://img.shields.io/badge/node-%E2%89%A520-green)
 
 ## Why this exists
 
-Claude's built-in web fetch often fails on JavaScript-heavy or bot-protected
+Claude's built-in web fetch often fails on JavaScript heavy or bot protected
 pages, and claude.ai connectors require OAuth 2.1. This server fixes both:
 
-- it drives a **real Chromium browser**, so modern pages actually render;
-- it is its **own OAuth 2.1 server** — no Auth0 / Keycloak / external login needed;
-- it treats every fetched page as **untrusted** and filters injection attempts
+- **real Chromium browser**: to let modern pages actually render
+- **own OAuth 2.1 server:** so no external auth provider needed
+- **filter against prompt injections:** it treats every fetched page as untrusted and filters injection attempts
   before Claude ever sees them.
 
 ## Features
 
-- 🌐 **Real headless browser** (Playwright/Chromium) — runs JavaScript, can wait for a selector.
-- 📝 **Clean output** — main-content extraction to Markdown (default), or text / HTML.
-- 🔐 **Self-contained OAuth 2.1** — dynamic client registration, PKCE, refresh-token rotation. Plus an optional static token for headless/automation.
-- 🛡️ **Safety built in** — prompt-injection filter with unguessable content boundaries, and an SSRF guard that blocks internal / loopback / cloud-metadata targets.
-- 🧰 **One container** — rootless-Podman (or Docker) friendly, sits behind any reverse proxy.
-- 👤 **Single-user by design** — one login gates everything. Perfect for a personal connector.
+- 🌐 **Real headless browser** (Playwright/Chromium): Runs JavaScript, can wait for a selector.
+- 📝 **Clean output:** main content extraction to Markdown (default), or text / HTML.
+- 🔐 **Self-contained OAuth 2.1:** dynamic client registration, PKCE, refresh-token rotation. Plus an optional static token for headless/automation.
+- 🛡️ **Safety built in:** prompt-injection filter with unguessable content boundaries, and an SSRF guard that blocks internal / loopback / cloud-metadata targets.
+- 🧰 **One container:** rootless-Podman (or Docker) friendly, sits behind any reverse proxy.
+- 👤 **Single-user by design:** one login gates everything. Perfect for a personal connector.
 
 ## How it works
 
@@ -38,11 +38,10 @@ It exposes one tool: **`fetch_url`**.
 
 ## Quick start
 
-You need rootless **Podman** (or Docker) and a public **HTTPS** hostname pointing
+You need rootless Podman (or Docker) and a public HTTPS hostname pointing
 at your machine (any reverse proxy that terminates TLS).
 
-> Throughout this README, replace `lalbers` with your GitHub handle and
-> `YOUR_HOST` with your own domain.
+> Throughout this README, replace `YOUR_HOST` with your own domain.
 
 ```bash
 git clone https://github.com/lalbers/renderfetch-mcp.git
@@ -50,7 +49,7 @@ cd renderfetch-mcp
 cp .env.example .env
 ```
 
-Edit `.env` — set a username + a strong password, your public URL, and generate
+Edit `.env`, set a username + a strong password, your public URL, and generate
 the secrets:
 
 ```bash
@@ -59,7 +58,7 @@ openssl rand -base64 32   # -> STATIC_BEARER_TOKEN (optional, for headless use)
 # PUBLIC_BASE_URL=https://mcp.example.com
 ```
 
-Run it — pick one:
+Run it, pick one:
 
 ```bash
 # Compose (Podman or Docker)
@@ -83,7 +82,7 @@ systemctl --user daemon-reload && systemctl --user start renderfetch-mcp
 ```
 
 Then point your reverse proxy so `https://YOUR_HOST/mcp` reaches
-`127.0.0.1:10120`. Ready-made snippets for **nginx, Traefik, and Caddy** are in
+`127.0.0.1:10120`. Ready-made snippets for nginx, Traefik, and Caddy are in
 [`deploy/`](deploy/). Check it's alive:
 
 ```bash
@@ -92,7 +91,7 @@ curl https://YOUR_HOST/healthz        # {"status":"ok"}
 
 ## Connect a client
 
-**claude.ai** — Settings → Connectors → **Add custom connector** → paste
+Go to [claude.ai](https://claude.ai), then Settings → Connectors → Add custom connector → paste
 `https://YOUR_HOST/mcp`. Approve the consent screen with your `.env` username and
 password. That's it.
 
@@ -123,18 +122,18 @@ Then just ask: *"Fetch https://example.com and summarize it."*
 | `max_chars` | cap the returned length |
 
 An optional `screenshot` tool can be turned on with `SCREENSHOT_ENABLED=true`
-(off by default — images are token-expensive).
+(off by default because images are token-expensive).
 
 ## Configuration
 
-Everything is set via environment variables — see [`.env.example`](.env.example)
+Everything is set via environment variables, see [`.env.example`](.env.example)
 for the full list. The essentials:
 
 | variable | what it does |
 |---|---|
 | `PUBLIC_BASE_URL` | your public URL, e.g. `https://mcp.example.com` (no trailing slash) |
 | `AUTH_USERNAME` / `AUTH_PASSWORD` | the single login that gates the consent screen |
-| `JWT_SECRET` | signs access tokens — use a long random value |
+| `JWT_SECRET` | signs access tokens (use a long random value) |
 | `STATIC_BEARER_TOKEN` | optional bearer for headless clients; leave empty to disable |
 | `OAUTH_ONLY` | set `true` to allow OAuth only (disables the static token) |
 | `FILTER_MODE` | `strict` (block risky pages) or `lenient` (sanitize only) |
@@ -152,7 +151,7 @@ static token. Full model and how to report issues: [SECURITY.md](SECURITY.md).
 
 ## Develop & test
 
-No host installs needed — run the suite in a throwaway container:
+No host installs needed, run the suite in a throwaway container:
 
 ```bash
 tar -cf - src test package.json package-lock.json tsconfig.json vitest.config.ts | \
