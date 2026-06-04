@@ -5,7 +5,7 @@ threat model and how to report problems.
 
 ## Reporting a vulnerability
 
-Please report security issues **privately** — open a
+Please report security issues privately. Open a
 [GitHub Security Advisory](https://docs.github.com/en/code-security/security-advisories)
 on this repo (Security → Report a vulnerability) rather than a public issue.
 
