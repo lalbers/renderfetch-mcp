@@ -121,6 +121,21 @@ Then just ask: *"Fetch https://example.com and summarize it."*
 | `css_selector` | extract just this part of the page |
 | `max_chars` | cap the returned length |
 
+### What comes back
+
+The page text is returned **twice**: as a text block in `content`, and as
+`structuredContent.text` alongside the metadata (`final_url`, `http_status`,
+`title`, `truncated`, `format`, `filter`).
+
+That duplication is deliberate. Some MCP clients render only
+`structuredContent` when the field is present — the claude.ai connector began
+doing so in early September 2026. A result whose `structuredContent` carried
+metadata alone therefore reached the model with no page text at all, while the
+server log showed a perfectly successful fetch. Clients that ignore
+`structuredContent` still read `content`, so both kinds are served.
+
+Errors are returned as clear objects, never thrown.
+
 An optional `screenshot` tool can be turned on with `SCREENSHOT_ENABLED=true`
 (off by default because images are token-expensive).
 

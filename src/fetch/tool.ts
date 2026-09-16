@@ -17,6 +17,27 @@ function toolError(error: string, message: string, extra: Record<string, unknown
   };
 }
 
+/**
+ * Build a fetch_url result. The page text goes into BOTH `content` and
+ * `structuredContent.text`. Some MCP clients (the claude.ai connector since
+ * early September 2026) render only `structuredContent` when it is present —
+ * a result whose structuredContent carried metadata alone reached the model
+ * without a single character of page text, while the server log showed a
+ * successful fetch. `content` stays for clients that ignore structuredContent.
+ */
+export function fetchResult<M extends Record<string, unknown> & { text?: never }>(
+  meta: M,
+  body: string,
+  isError = false,
+): CallToolResult {
+  const result: CallToolResult = {
+    structuredContent: { ...meta, text: body },
+    content: [{ type: 'text', text: body }],
+  };
+  if (isError) result.isError = true;
+  return result;
+}
+
 function describeFetchError(err: unknown): string {
   if (err instanceof Error) {
     if (err.name === 'TimeoutError') return 'Navigation timed out before the page finished loading.';
@@ -88,19 +109,13 @@ async function handleFetch(args: FetchArgs): Promise<CallToolResult> {
   };
 
   if (!filtered.allowed) {
-    return {
-      isError: true,
-      structuredContent: meta,
-      content: [
-        {
-          type: 'text',
-          text:
-            `fetch_url blocked: content from ${rendered.finalUrl} tripped the prompt-injection filter ` +
-            `(risk=${filtered.riskLevel}, detections=${filtered.detections.join('; ') || 'n/a'}). ` +
-            `Content withheld. Set FILTER_MODE=lenient to receive sanitized content instead.`,
-        },
-      ],
-    };
+    return fetchResult(
+      meta,
+      `fetch_url blocked: content from ${rendered.finalUrl} tripped the prompt-injection filter ` +
+        `(risk=${filtered.riskLevel}, detections=${filtered.detections.join('; ') || 'n/a'}). ` +
+        `Content withheld. Set FILTER_MODE=lenient to receive sanitized content instead.`,
+      true,
+    );
   }
 
   const headerLines = [
@@ -119,7 +134,7 @@ async function handleFetch(args: FetchArgs): Promise<CallToolResult> {
   // NOT add fixed outer markers — a fetched page could forge those.
   const body = `${headerLines.join('\n')}\n\n${filtered.content}`;
 
-  return { structuredContent: meta, content: [{ type: 'text', text: body }] };
+  return fetchResult(meta, body);
 }
 
 interface ScreenshotArgs {
