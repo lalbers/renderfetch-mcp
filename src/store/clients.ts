@@ -50,8 +50,19 @@ export class SqliteClientsStore implements OAuthRegisteredClientsStore {
   // The SDK's registration handler generates client_id/issued_at and passes the
   // full client object; we persist it verbatim after validating redirect URIs.
   registerClient(client: OAuthClientInformationFull): OAuthClientInformationFull {
+    // Log every DCR attempt (incl. the requested redirect_uris) so a rejected
+    // client — e.g. a new connector whose callback isn't yet allow-listed — is
+    // observable and its exact redirect_uri can be added to EXTRA_REDIRECT_URIS.
+    logger.info(
+      { client_name: client.client_name, redirect_uris: client.redirect_uris },
+      'DCR attempt',
+    );
     for (const uri of client.redirect_uris) {
       if (!isAllowedRedirect(uri)) {
+        logger.warn(
+          { client_name: client.client_name, redirect_uri: uri },
+          'DCR rejected: redirect_uri not allowed',
+        );
         throw new InvalidClientMetadataError(`redirect_uri not allowed: ${uri}`);
       }
     }
