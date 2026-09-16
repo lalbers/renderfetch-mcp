@@ -37,7 +37,10 @@ const insertStmt = db.prepare(
    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
 );
 const getStmt = db.prepare('SELECT * FROM auth_codes WHERE code_hash = ?');
-const consumeStmt = db.prepare('UPDATE auth_codes SET consumed = 1 WHERE code_hash = ?');
+const consumeStmt = db.prepare(
+  'UPDATE auth_codes SET consumed = 1 WHERE code_hash = ? AND consumed = 0 AND expires_at > ?',
+);
+const consumeConsentStmt = db.prepare('INSERT OR IGNORE INTO consumed_consents (jti_hash, expires_at) VALUES (?, ?)');
 
 /** Create a single-use authorization code; returns the plaintext code. */
 export function createAuthCode(data: NewAuthCode): string {
@@ -71,11 +74,26 @@ function toStored(row: Row): StoredAuthCode {
 export function getAuthCode(code: string): StoredAuthCode | undefined {
   const row = getStmt.get(sha256hex(code)) as Row | undefined;
   if (!row) return undefined;
-  if (row.consumed === 1 || row.expires_at < nowSec()) return undefined;
+  if (row.consumed === 1 || row.expires_at <= nowSec()) return undefined;
   return toStored(row);
 }
 
 /** Mark a code consumed (one-time use). */
-export function consumeAuthCode(code: string): void {
-  consumeStmt.run(sha256hex(code));
+export function consumeAuthCode(code: string): boolean {
+  return consumeStmt.run(sha256hex(code), nowSec()).changes === 1;
+}
+
+/** A consent token mints at most one code, including across processes/restarts. */
+export function createAuthCodeForConsent(jti: string, expiresAt: number, data: NewAuthCode): string | undefined {
+  return db.transaction(() => {
+    if (expiresAt <= nowSec()) return undefined;
+    if (consumeConsentStmt.run(sha256hex(jti), expiresAt).changes !== 1) return undefined;
+    return createAuthCode(data);
+  }).immediate();
+}
+
+/** Denial consumes the request too; approval cannot subsequently replay it. */
+export function consumeConsent(jti: string, expiresAt: number): boolean {
+  if (expiresAt <= nowSec()) return false;
+  return consumeConsentStmt.run(sha256hex(jti), expiresAt).changes === 1;
 }

@@ -8,7 +8,7 @@ import { sha256hex } from './util.js';
 import { RenderfetchOAuthProvider } from './auth/provider.js';
 import { consentRouter } from './auth/consent.js';
 import { buildAuthMiddleware } from './auth/bearer.js';
-import { handleMcpPost, handleMcpSessionRequest } from './mcp/transport.js';
+import { authenticatedIdentity, handleMcpPost, handleMcpSessionRequest } from './mcp/transport.js';
 
 // Forward async handler rejections to the Express error handler.
 const wrap =
@@ -19,7 +19,7 @@ const wrap =
 export function createApp(): Express {
   const app = express();
   app.disable('x-powered-by');
-  app.set('trust proxy', 1); // exactly one hop in front: Traefik (X-Forwarded-*)
+  app.set('trust proxy', config.TRUST_PROXY.length ? config.TRUST_PROXY : false);
 
   // Unauthenticated health endpoint.
   app.get('/healthz', (_req, res) => {
@@ -44,11 +44,19 @@ export function createApp(): Express {
     }),
   );
 
-  // CORS for browser-based MCP clients / the MCP Inspector. claude.ai calls the
-  // server from its cloud (no CORS needed), but exposing Mcp-Session-Id is
-  // mandatory for any browser client to read the session id.
+  // Validate before auth and preflight. An absent Origin is valid for server
+  // clients, but a present Origin must exactly match a configured browser origin.
+  const allowedOrigins = new Set([config.issuerUrl.origin, ...config.ALLOWED_ORIGINS]);
+  app.use('/mcp', (req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin !== undefined && (typeof origin !== 'string' || !allowedOrigins.has(origin))) {
+      res.status(403).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Origin not allowed' }, id: null });
+      return;
+    }
+    next();
+  });
   const corsMw = cors({
-    origin: true,
+    origin: (origin, callback) => callback(null, origin !== undefined && allowedOrigins.has(origin)),
     methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
       'Content-Type',
@@ -63,24 +71,23 @@ export function createApp(): Express {
 
   const auth = buildAuthMiddleware(provider);
 
-  // Per-token rate limit (auth runs first, so req.auth is always set here).
-  const perToken = rateLimit({
+  // Stable principal limit: refreshing an access token must not reset the bucket.
+  const perIdentity = rateLimit({
     windowMs: config.RATE_LIMIT_WINDOW_MS,
     limit: config.RATE_LIMIT_MAX,
     standardHeaders: true,
     legacyHeaders: false,
-    // Key strictly on the token (auth runs first, so req.auth is always set);
-    // never touch req.ip, so the library's IP/proxy validations don't apply.
-    keyGenerator: (req: Request) => (req.auth ? sha256hex(req.auth.token) : 'anon'),
+    // Hash the authenticated tuple, never a token or an untrusted forwarding header.
+    keyGenerator: (req: Request) => sha256hex(authenticatedIdentity(req) ?? 'unauthenticated'),
     message: { jsonrpc: '2.0', error: { code: -32000, message: 'Rate limit exceeded' }, id: null },
   });
 
   app.options('/mcp', corsMw, (_req, res) => {
     res.sendStatus(204);
   });
-  app.post('/mcp', corsMw, auth, perToken, express.json({ limit: '4mb' }), wrap(handleMcpPost));
-  app.get('/mcp', corsMw, auth, perToken, wrap(handleMcpSessionRequest));
-  app.delete('/mcp', corsMw, auth, perToken, wrap(handleMcpSessionRequest));
+  app.post('/mcp', corsMw, auth, perIdentity, express.json({ limit: '4mb' }), wrap(handleMcpPost));
+  app.get('/mcp', corsMw, auth, perIdentity, wrap(handleMcpSessionRequest));
+  app.delete('/mcp', corsMw, auth, perIdentity, wrap(handleMcpSessionRequest));
 
   // 404 fallback.
   app.use((_req, res) => {
@@ -89,8 +96,25 @@ export function createApp(): Express {
 
   // Error handler.
   app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
-    logger.error({ err }, 'unhandled request error');
     if (res.headersSent) return next(err);
+    const failure = typeof err === 'object' && err !== null
+      ? err as { type?: unknown; status?: unknown; expose?: unknown } : {};
+    const type = failure.type;
+    // Body-parser can forward decoder errors without a `type` (e.g. bad gzip).
+    const clientStatus = failure.expose === true ? failure.status : undefined;
+    if (type === 'entity.too.large' || clientStatus === 413) {
+      res.status(413).json({ jsonrpc: '2.0', error: { code: -32600, message: 'Request body too large' }, id: null });
+      return;
+    }
+    if (type === 'entity.parse.failed' || type === 'request.size.invalid' || type === 'request.aborted' || clientStatus === 400) {
+      res.status(400).json({ jsonrpc: '2.0', error: { code: -32700, message: 'Invalid request body' }, id: null });
+      return;
+    }
+    if (type === 'encoding.unsupported' || type === 'charset.unsupported' || clientStatus === 415) {
+      res.status(415).json({ jsonrpc: '2.0', error: { code: -32600, message: 'Unsupported request encoding' }, id: null });
+      return;
+    }
+    logger.error({ err }, 'unhandled request error');
     res.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: 'Internal error' }, id: null });
   });
 

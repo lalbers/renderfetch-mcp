@@ -1,9 +1,9 @@
-import express, { Router } from 'express';
+import express, { Router, type Response } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { config, OWNER_USER_ID } from '../config.js';
 import { logger } from '../logger.js';
-import { verifyConsentRequest, type ConsentRequest } from './jwt.js';
-import { createAuthCode } from '../store/codes.js';
+import { verifyConsentRequest, type VerifiedConsentRequest } from './jwt.js';
+import { createAuthCodeForConsent, consumeConsent } from '../store/codes.js';
 import { isAllowedRedirect } from '../store/clients.js';
 import { htmlEscape, timingSafeEqualStr } from '../util.js';
 
@@ -19,23 +19,28 @@ const consentLimiter = rateLimit({
   message: 'Too many attempts. Please try again later.',
 });
 
-// One-time-use enforcement for consent-request tokens (jti -> expiry epoch ms).
-const usedConsentJti = new Map<string, number>();
-function markJtiUsed(jti: string): void {
-  const now = Date.now();
-  if (usedConsentJti.size > 5000) {
-    for (const [k, exp] of usedConsentJti) if (exp < now) usedConsentJti.delete(k);
-  }
-  usedConsentJti.set(jti, now + (config.CONSENT_REQUEST_TTL + 60) * 1000);
-}
-function isJtiUsed(jti: string): boolean {
-  const exp = usedConsentJti.get(jti);
-  if (exp === undefined) return false;
-  if (exp < Date.now()) {
-    usedConsentJti.delete(jti);
-    return false;
-  }
-  return true;
+// Consent carries credentials and a signed authorization request: never cache,
+// embed, or leak its query string to another origin.
+consentRouter.use('/consent', (_req, res, next) => {
+  res.set({
+    'Cache-Control': 'no-store',
+    Pragma: 'no-cache',
+    'Referrer-Policy': 'no-referrer',
+    'X-Frame-Options': 'DENY',
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+  });
+  next();
+});
+
+function allowConsentCallback(res: Response, redirectUri: string): void {
+  // no-referrer makes Chromium send Origin:null for form POSTs. same-origin
+  // preserves the CSRF origin check while still hiding the consent URL from
+  // every external callback (including its signed request query parameter).
+  res.set('Referrer-Policy', 'same-origin');
+  // Chromium applies form-action to POST redirects too. Permit only this signed,
+  // validated callback origin, not arbitrary external form destinations.
+  res.set('Content-Security-Policy', `default-src 'none'; style-src 'unsafe-inline'; form-action 'self' ${new URL(redirectUri).origin}; base-uri 'none'; frame-ancestors 'none'`);
 }
 
 function layout(title: string, body: string): string {
@@ -68,7 +73,7 @@ function errorPage(message: string): string {
   return layout('Authorization error', `<h1>Authorization error</h1><p>${htmlEscape(message)}</p>`);
 }
 
-function consentPage(reqToken: string, cr: ConsentRequest, error: string | null): string {
+function consentPage(reqToken: string, cr: VerifiedConsentRequest, error: string | null): string {
   let redirectHost = '(unknown)';
   try {
     redirectHost = new URL(cr.redirectUri).host;
@@ -105,6 +110,8 @@ consentRouter.get('/consent', async (req, res) => {
   const reqToken = typeof req.query.req === 'string' ? req.query.req : '';
   try {
     const cr = await verifyConsentRequest(reqToken);
+    if (!isAllowedRedirect(cr.redirectUri)) throw new Error('Invalid redirect target');
+    allowConsentCallback(res, cr.redirectUri);
     res.type('html').send(consentPage(reqToken, cr, null));
   } catch {
     res
@@ -114,9 +121,18 @@ consentRouter.get('/consent', async (req, res) => {
   }
 });
 
-consentRouter.post('/consent', consentLimiter, express.urlencoded({ extended: false }), async (req, res) => {
-  const reqToken = typeof req.body.req === 'string' ? req.body.req : '';
-  let cr: ConsentRequest;
+consentRouter.post('/consent', consentLimiter, express.urlencoded({ extended: false, limit: '16kb', parameterLimit: 8 }), async (req, res) => {
+  // Form submissions must originate from this consent UI, not another website.
+  let origin = req.headers.origin;
+  if (origin === undefined && req.headers.referer) {
+    try { origin = new URL(req.headers.referer).origin; } catch { /* rejected below */ }
+  }
+  if (origin !== config.issuerUrl.origin) {
+    res.status(403).type('html').send(errorPage('Invalid consent origin.'));
+    return;
+  }
+  const reqToken = typeof req.body?.req === 'string' ? req.body?.req : '';
+  let cr: VerifiedConsentRequest;
   try {
     cr = await verifyConsentRequest(reqToken);
   } catch {
@@ -130,8 +146,13 @@ consentRouter.post('/consent', consentLimiter, express.urlencoded({ extended: fa
     return;
   }
 
-  const action = String(req.body.action ?? '');
+  allowConsentCallback(res, cr.redirectUri);
+  const action = String(req.body?.action ?? '');
   if (action !== 'approve') {
+    if (action !== 'deny' || !consumeConsent(cr.jti, cr.expiresAt)) {
+      res.status(400).type('html').send(errorPage('This authorization request is invalid or already completed.'));
+      return;
+    }
     const url = new URL(cr.redirectUri);
     url.searchParams.set('error', 'access_denied');
     if (cr.state) url.searchParams.set('state', cr.state);
@@ -140,8 +161,8 @@ consentRouter.post('/consent', consentLimiter, express.urlencoded({ extended: fa
     return;
   }
 
-  const username = String(req.body.username ?? '');
-  const password = String(req.body.password ?? '');
+  const username = String(req.body?.username ?? '');
+  const password = String(req.body?.password ?? '');
   const userOk = timingSafeEqualStr(username, config.AUTH_USERNAME);
   const passOk = timingSafeEqualStr(password, config.AUTH_PASSWORD);
   if (!(userOk && passOk)) {
@@ -150,16 +171,7 @@ consentRouter.post('/consent', consentLimiter, express.urlencoded({ extended: fa
     return;
   }
 
-  // One-time use: a consent token may mint at most one authorization code.
-  if (cr.jti && isJtiUsed(cr.jti)) {
-    res
-      .status(400)
-      .type('html')
-      .send(errorPage('This authorization request has already been completed. Start the connection again from your client.'));
-    return;
-  }
-
-  const code = createAuthCode({
+  const code = createAuthCodeForConsent(cr.jti, cr.expiresAt, {
     clientId: cr.clientId,
     redirectUri: cr.redirectUri,
     codeChallenge: cr.codeChallenge,
@@ -168,7 +180,10 @@ consentRouter.post('/consent', consentLimiter, express.urlencoded({ extended: fa
     userId: OWNER_USER_ID,
     ttlSeconds: config.AUTH_CODE_TTL,
   });
-  if (cr.jti) markJtiUsed(cr.jti);
+  if (!code) {
+    res.status(400).type('html').send(errorPage('This authorization request has already been completed. Start the connection again from your client.'));
+    return;
+  }
   const url = new URL(cr.redirectUri);
   url.searchParams.set('code', code);
   if (cr.state) url.searchParams.set('state', cr.state);

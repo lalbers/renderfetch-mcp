@@ -11,45 +11,51 @@ export function maxRisk(a: RiskLevel, b: RiskLevel): RiskLevel {
   return RISK_ORDER.indexOf(a) >= RISK_ORDER.indexOf(b) ? a : b;
 }
 
-// Zero-width, BOM, and bidi-control code-point ranges used to smuggle hidden
-// text. Expressed as numeric ranges so no invisible characters appear in source.
-const HIDDEN_RANGES: ReadonlyArray<readonly [number, number]> = [
-  [0x200b, 0x200f], // zero-width space/joiners + LRM/RLM
-  [0x202a, 0x202e], // bidi embedding/override
-  [0x2060, 0x2064], // word joiner + invisible math operators
-  [0x2066, 0x206f], // bidi isolates + deprecated format chars
-  [0xfeff, 0xfeff], // BOM / zero-width no-break space
-];
+// Canonicalization is for detection, not authorization: no pattern/ML layer can
+// prove that arbitrary prose is free of prompt injection.
+import { JSDOM } from 'jsdom';
 
-function isHidden(cp: number): boolean {
-  for (const [lo, hi] of HIDDEN_RANGES) {
-    if (cp >= lo && cp <= hi) return true;
-  }
-  return false;
+const HIDDEN_OR_CONTROL = /[\p{Default_Ignorable_Code_Point}\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu;
+
+function stripHiddenChars(input: string): string {
+  return input.replace(HIDDEN_OR_CONTROL, '');
 }
 
-function hasHiddenChars(s: string): boolean {
-  for (const ch of s) {
-    const cp = ch.codePointAt(0);
-    if (cp !== undefined && isHidden(cp)) return true;
+function stripComments(input: string): string {
+  let output = '';
+  let cursor = 0;
+  for (;;) {
+    const start = input.indexOf('<!--', cursor);
+    if (start < 0) return output + input.slice(cursor);
+    output += input.slice(cursor, start);
+    const end = input.indexOf('-->', start + 4);
+    if (end < 0) return output;
+    cursor = end + 3;
   }
-  return false;
 }
 
-function stripHiddenChars(s: string): string {
-  let out = '';
-  for (const ch of s) {
-    const cp = ch.codePointAt(0);
-    if (cp === undefined || !isHidden(cp)) out += ch;
+/** Decode without treating the input as executable HTML, then normalize. */
+export function normalizeForDetection(input: string): string {
+  let result = input;
+  // Each bounded round removes obfuscation before decoding again, so stripping
+  // hidden characters cannot reconstruct an entity/escape that goes unexamined.
+  // The emitted content is never replaced by this potentially active HTML.
+  for (let i = 0; i < 4; i++) {
+    let decoded = stripHiddenChars(result.normalize('NFKC'));
+    decoded = decoded.replace(/(?:%[0-9a-f]{2})+/gi, (encoded) =>
+      Buffer.from(encoded.replace(/%/g, ''), 'hex').toString('utf8'));
+    if (/&(?:#|[a-z])/i.test(decoded)) decoded = JSDOM.fragment(decoded.replace(/</g, '&lt;')).textContent ?? '';
+    if (decoded === result) break;
+    result = decoded;
   }
-  return out;
+  return stripHiddenChars(result.normalize('NFKC')).replace(/\s+/gu, ' ');
 }
 
 // Off-screen / invisible CSS frequently used to hide injected instructions.
 const HIDDEN_CSS =
   /style\s*=\s*["'][^"']*(display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0|font-size\s*:\s*0(px)?|(?:left|top|text-indent)\s*:\s*-\d{3,}px)/i;
 
-const HTML_COMMENT = /<!--[\s\S]*?-->/g;
+const HTML_COMMENT = /<!--/;
 
 // Instruction-like markup tags (role/system markers).
 const INSTRUCTION_TAG =
@@ -114,39 +120,45 @@ export function analyzePatterns(input: string): PatternResult {
   const detections: string[] = [];
   let risk: RiskLevel = 'low';
 
-  if (hasHiddenChars(input)) {
+  // Scan both the original and reconstructed representations. In particular,
+  // removing invisible characters/comments must not create an instruction that
+  // was never scanned. HTML tag removal catches split inline words as well.
+  const neutralized = stripComments(stripHiddenChars(input))
+    .replace(INSTRUCTION_TAG, (match) => `‹${match.slice(1, -1)}›`)
+    .replace(/\[(\/?)UD-/gi, '($1UD-');
+  const canonical = normalizeForDetection(input);
+  const variants = [...new Set([
+    input,
+    stripHiddenChars(input.normalize('NFKC')),
+    neutralized,
+    canonical,
+    stripComments(canonical),
+    canonical.replace(/<[^<>]*>/g, ''),
+    canonical.replace(/<[^<>]*>/g, ' '),
+  ])];
+  if (stripHiddenChars(input) !== input) {
     detections.push('hidden_unicode');
     risk = maxRisk(risk, 'medium');
   }
-  if (HIDDEN_CSS.test(input)) {
+  if (variants.some((value) => HIDDEN_CSS.test(value))) {
     detections.push('hidden_css');
     risk = maxRisk(risk, 'medium');
   }
-  if (testStateless(HTML_COMMENT, input)) {
-    detections.push('html_comment');
-    risk = maxRisk(risk, 'low');
-  }
+  if (HTML_COMMENT.test(input)) detections.push('html_comment');
   for (const rule of RULES) {
-    if (testStateless(rule.re, input)) {
+    if (variants.some((value) => testStateless(rule.re, value))) {
       detections.push(rule.name);
       risk = maxRisk(risk, rule.risk);
     }
   }
 
-  // Content trying to forge the boundary fence is a strong injection signal.
-  if (BOUNDARY_TOKEN.test(input)) {
+  if (variants.some((value) => BOUNDARY_TOKEN.test(value))) {
     detections.push('boundary_forgery');
     risk = maxRisk(risk, 'medium');
   }
 
-  // Neutralize without destroying legitimate prose: strip zero-width/bidi chars
-  // and HTML comments, defang instruction-like tags, and defang any forged
-  // boundary tokens so fetched content can't fake the fence delimiters.
-  const neutralized = stripHiddenChars(input)
-    .replace(HTML_COMMENT, ' ')
-    .replace(INSTRUCTION_TAG, (m) => `‹${m.slice(1, -1)}›`)
-    .replace(/\[(\/?)UD-/gi, '($1UD-');
-
+  // Keep serialization intact: entity/NFKC decoding is detection-only. The
+  // per-response random fence is a trust signal, never an isolation guarantee.
   return { detections: [...new Set(detections)], risk, neutralized };
 }
 
@@ -155,6 +167,7 @@ export function analyzePatterns(input: string): PatternResult {
  * appears in both delimiters and in the instruction line, so the model's
  * contract is the *random* fence — fetched content cannot forge it (and any
  * literal `[UD-`/`[/UD-` in the content is defanged in analyzePatterns).
+ * Delimiters reduce ambiguity; they do not make model interpretation a sandbox.
  */
 export function boundaryWrap(content: string, id: string): string {
   return (

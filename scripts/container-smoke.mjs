@@ -13,6 +13,7 @@ process.env.JWT_SECRET ||= 'test-secret-test-secret-test-secret-0123456789';
 process.env.DB_PATH = '/tmp/e2e.db';
 process.env.LOG_LEVEL = 'warn';
 process.env.FETCH_ALLOW_PRIVATE = 'true';
+process.env.CHROMIUM_NO_SANDBOX = 'true'; // explicit disposable-container test only
 
 const { renderPage, closeBrowser } = await import('/app/dist/fetch/browser.js');
 const { extract } = await import('/app/dist/fetch/extract.js');
@@ -48,6 +49,8 @@ const server = http.createServer((req, res) => {
 });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const port = server.address().port;
+const { config } = await import('/app/dist/config.js');
+config.FETCH_ALLOWED_PORTS.push(port); // private override never bypasses port policy
 
 try {
   // 1) JS render + markdown extraction (the core fetch path)

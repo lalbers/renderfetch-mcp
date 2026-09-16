@@ -14,6 +14,7 @@ export default defineConfig({
       JWT_SECRET: 'test-secret-test-secret-test-secret-0123456789',
       DB_PATH: ':memory:',
       FILTER_TIER2: 'false',
+      CHROMIUM_NO_SANDBOX: 'true',
       LOG_LEVEL: 'silent',
     },
   },

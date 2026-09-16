@@ -1,8 +1,8 @@
-import { lookup } from 'node:dns/promises';
+import { lookup as dnsLookup } from 'node:dns/promises';
 import { isIP, BlockList } from 'node:net';
 import { config } from '../config.js';
 
-/** Thrown when a URL is rejected before any network access (SSRF guard). */
+/** Thrown when a URL or its resolved destination violates the network policy. */
 export class FetchGuardError extends Error {
   constructor(message: string) {
     super(message);
@@ -10,9 +10,60 @@ export class FetchGuardError extends Error {
   }
 }
 
-// Loopback, private, link-local (incl. cloud metadata 169.254.169.254), CGNAT,
-// multicast, and reserved ranges. net.BlockList does correct subnet matching.
-const blocked = new BlockList();
+export interface FetchUrlPolicy {
+  // Explicitly opt out of address-class restrictions, including special-use
+  // and translation ranges. URL syntax, port and DNS-answer checks still apply.
+  allowPrivate?: boolean;
+  allowedPorts?: readonly number[];
+}
+
+export interface FetchTargetOptions extends FetchUrlPolicy {
+  lookup?: (hostname: string) => Promise<Array<{ address: string; family: number }>>;
+  dnsTimeoutMs?: number;
+}
+
+export interface FetchTarget {
+  url: URL;
+  hostname: string;
+  address: string;
+  family: 4 | 6;
+  port: number;
+}
+
+const DEFAULT_ALLOWED_PORTS = [80, 443] as const;
+const DEFAULT_DNS_TIMEOUT_MS = 5_000;
+const MAX_DNS_ANSWERS = 64;
+const MAX_ACTIVE_DNS_LOOKUPS = 64;
+let activeDnsLookups = 0;
+
+/**
+ * dns.lookup cannot be cancelled by a caller's timeout. Keep its slot occupied
+ * until the actual OS lookup settles, otherwise repeated timeouts can build an
+ * unbounded resolver queue. This cap is shared by every fetch and preflight;
+ * overload fails immediately instead of creating another application queue.
+ */
+function boundedLookup(
+  hostname: string,
+  lookup: NonNullable<FetchTargetOptions['lookup']>,
+): Promise<Array<{ address: string; family: number }>> {
+  if (activeDnsLookups >= MAX_ACTIVE_DNS_LOOKUPS) {
+    throw new FetchGuardError('DNS resolver capacity exceeded');
+  }
+  activeDnsLookups++;
+  try {
+    return Promise.resolve(lookup(hostname)).finally(() => { activeDnsLookups--; });
+  } catch (error) {
+    // Injectable resolvers may throw synchronously before returning a Promise.
+    activeDnsLookups--;
+    throw error;
+  }
+}
+
+// Conservative special-purpose policy: some globally reachable exceptions in
+// these ranges are deliberately unavailable. Keep this synchronized with the
+// IANA IPv4/IPv6 Special-Purpose Address Registries rather than treating all
+// non-RFC1918 addresses as safe Internet destinations.
+const blockedV4 = new BlockList();
 const V4: ReadonlyArray<readonly [string, number]> = [
   ['0.0.0.0', 8],
   ['10.0.0.0', 8],
@@ -22,174 +73,166 @@ const V4: ReadonlyArray<readonly [string, number]> = [
   ['172.16.0.0', 12],
   ['192.0.0.0', 24],
   ['192.0.2.0', 24],
+  ['192.31.196.0', 24],
+  ['192.52.193.0', 24],
+  ['192.88.99.0', 24],
   ['192.168.0.0', 16],
+  ['192.175.48.0', 24],
   ['198.18.0.0', 15],
   ['198.51.100.0', 24],
   ['203.0.113.0', 24],
   ['224.0.0.0', 4],
   ['240.0.0.0', 4],
 ];
-for (const [addr, prefix] of V4) blocked.addSubnet(addr, prefix, 'ipv4');
-blocked.addAddress('::1', 'ipv6'); // loopback
-blocked.addAddress('::', 'ipv6'); // unspecified
-blocked.addSubnet('fc00::', 7, 'ipv6'); // unique local
-blocked.addSubnet('fe80::', 10, 'ipv6'); // link-local
-blocked.addSubnet('fec0::', 10, 'ipv6'); // site-local (deprecated, still routable on some stacks)
-blocked.addSubnet('ff00::', 8, 'ipv6'); // multicast
+for (const [address, prefix] of V4) blockedV4.addSubnet(address, prefix, 'ipv4');
 
-const isPrivateV4 = (addr: string): boolean => blocked.check(addr, 'ipv4');
+const globalV6 = new BlockList();
+globalV6.addSubnet('2000::', 3, 'ipv6');
+const blockedV6 = new BlockList();
+blockedV6.addSubnet('2001::', 23, 'ipv6'); // IETF assignments, incl. Teredo, benchmarking, ORCHID
+blockedV6.addSubnet('2001:db8::', 32, 'ipv6'); // documentation
+blockedV6.addSubnet('2002::', 16, 'ipv6'); // deprecated 6to4; do not trust embedded IPv4
+blockedV6.addSubnet('2620:4f:8000::', 48, 'ipv6'); // direct delegation AS112 service
+blockedV6.addSubnet('3fff::', 20, 'ipv6'); // documentation
 
-// Parse any IPv6 textual form (incl. "::" compression and a trailing dotted
-// IPv4) into 16 bytes. Returns null if it isn't a parseable IPv6 literal.
-function parseIPv6ToBytes(input: string): number[] | null {
-  let s = input;
-  const pct = s.indexOf('%');
-  if (pct >= 0) s = s.slice(0, pct); // strip zone id
-  if (s.length === 0) return null;
-
-  // Convert a trailing dotted-quad (e.g. ::ffff:127.0.0.1) into two hextets.
-  const dot = s.indexOf('.');
-  if (dot >= 0) {
-    const lastColon = s.lastIndexOf(':', dot);
-    if (lastColon < 0) return null;
-    const quad = s.slice(lastColon + 1).split('.');
-    if (quad.length !== 4) return null;
-    const o = quad.map(Number);
-    if (o.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
-    const h1 = (((o[0] ?? 0) << 8) | (o[1] ?? 0)).toString(16);
-    const h2 = (((o[2] ?? 0) << 8) | (o[3] ?? 0)).toString(16);
-    s = s.slice(0, lastColon + 1) + h1 + ':' + h2;
+/**
+ * True unless a literal address is permitted by our conservative public-only
+ * policy. IPv6 must be ordinary global unicast: mapped/compatible IPv4, NAT64,
+ * local-use translation, zone identifiers and other reserved ranges fail shut.
+ */
+export function isPrivateAddr(address: string): boolean {
+  if (typeof address !== 'string' || address.includes('%')) return true;
+  const family = isIP(address);
+  if (family === 4) return blockedV4.check(address, 'ipv4');
+  if (family === 6) {
+    return !globalV6.check(address, 'ipv6') || blockedV6.check(address, 'ipv6');
   }
+  return true;
+}
 
-  const halves = s.split('::');
-  if (halves.length > 2) return null;
-  const head = halves[0] ? halves[0].split(':') : [];
-  const tail = halves.length === 2 ? (halves[1] ? halves[1].split(':') : []) : null;
+const hostnameOf = (url: URL): string => url.hostname.replace(/^\[|\]$/g, '');
+const portOf = (url: URL): number => Number(url.port || (url.protocol === 'https:' ? 443 : 80));
 
-  let hextets: string[];
-  if (tail === null) {
-    hextets = head;
-    if (hextets.length !== 8) return null;
+/** Pure URL validation, with secure defaults independent of process configuration. */
+export function parseFetchUrl(raw: string, policy: FetchUrlPolicy = {}): URL {
+  // WHATWG URL parsing silently removes tabs/newlines and rewrites backslashes.
+  // Reject ambiguous inputs before parsing instead of validating another URL.
+  if (
+    typeof raw !== 'string' || raw.length === 0 || Buffer.byteLength(raw, 'utf8') > 8192 ||
+    /[\s\u0000-\u001f\u007f-\u009f\\]/u.test(raw) || !/^https?:\/\//i.test(raw)
+  ) {
+    throw new FetchGuardError('Invalid HTTP(S) URL');
+  }
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new FetchGuardError('Invalid HTTP(S) URL');
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new FetchGuardError('Only HTTP(S) URLs are allowed');
+  }
+  if (Buffer.byteLength(url.href, 'utf8') > 8192) {
+    throw new FetchGuardError('URL exceeds the maximum encoded length');
+  }
+  // The raw authority check also catches empty userinfo, which URL normalizes
+  // away (e.g. https://@example.com). Never pass URL credentials to a server.
+  const authority = raw.slice(raw.indexOf('//') + 2).split(/[/?#]/, 1)[0] ?? '';
+  if (!authority || authority.includes('@') || url.username || url.password) {
+    throw new FetchGuardError('URL credentials are not allowed');
+  }
+  const port = portOf(url);
+  if (!(policy.allowedPorts ?? DEFAULT_ALLOWED_PORTS).includes(port)) {
+    throw new FetchGuardError('Destination port is not allowed');
+  }
+  const hostname = hostnameOf(url);
+  const localName = hostname.toLowerCase().replace(/\.$/, '');
+  if (!policy.allowPrivate && (
+    localName === 'localhost' || localName.endsWith('.localhost') ||
+    (isIP(hostname) !== 0 && isPrivateAddr(hostname))
+  )) {
+    throw new FetchGuardError('Private or reserved destinations are not allowed');
+  }
+  return url;
+}
+
+/**
+ * Resolve once and return an approved literal IP for the caller to CONNECT to.
+ * The caller MUST connect to `address`, not re-resolve `hostname`, while keeping
+ * the original hostname for HTTP Host and TLS SNI/certificate verification.
+ * Validate every answer before selecting one; mixed public/private DNS fails
+ * closed. There is deliberately no cross-request verdict cache.
+ * Raw inputs must first go through parseFetchUrl: URL construction itself loses
+ * raw-only evidence such as empty userinfo or stripped tabs/newlines.
+ */
+export async function resolveFetchTarget(url: URL, options: FetchTargetOptions = {}): Promise<FetchTarget> {
+  const checked = parseFetchUrl(url.href, options);
+  const hostname = hostnameOf(checked);
+  const literalFamily = isIP(hostname);
+  let answers: Array<{ address: string; family: number }>;
+  if (literalFamily !== 0) {
+    answers = [{ address: hostname, family: literalFamily }];
   } else {
-    const missing = 8 - (head.length + tail.length);
-    if (missing < 1) return null; // "::" must compress at least one group
-    hextets = [...head, ...Array(missing).fill('0'), ...tail];
-  }
-  if (hextets.length !== 8) return null;
-
-  const bytes: number[] = [];
-  for (const h of hextets) {
-    if (!/^[0-9a-fA-F]{1,4}$/.test(h)) return null;
-    const v = parseInt(h, 16);
-    bytes.push((v >> 8) & 0xff, v & 0xff);
-  }
-  return bytes;
-}
-
-// Extract the embedded IPv4 from the known IPv6→IPv4 carriers so they can be
-// range-checked. Covers IPv4-mapped (::ffff:0:0/96), IPv4-compatible (::/96),
-// NAT64 (64:ff9b::/96) and 6to4 (2002::/16). Without this, e.g. [::a9fe:a9fe]
-// or [64:ff9b::a9fe:a9fe] would smuggle 169.254.169.254 past the v4 guard.
-function embeddedV4(b: number[]): string | null {
-  const zero = (from: number, to: number) => b.slice(from, to).every((x) => x === 0);
-  const quad = (i: number) => `${b[i]}.${b[i + 1]}.${b[i + 2]}.${b[i + 3]}`;
-  if (zero(0, 10) && b[10] === 0xff && b[11] === 0xff) return quad(12); // ::ffff:a.b.c.d
-  if (b[0] === 0x00 && b[1] === 0x64 && b[2] === 0xff && b[3] === 0x9b && zero(4, 12)) return quad(12); // 64:ff9b::
-  if (b[0] === 0x20 && b[1] === 0x02) return quad(2); // 2002:: (6to4)
-  if (zero(0, 12)) return quad(12); // ::a.b.c.d (IPv4-compatible)
-  return null;
-}
-
-/** True if a literal IP address is private/reserved/loopback/link-local. */
-export function isPrivateAddr(addr: string): boolean {
-  const v = isIP(addr);
-  if (v === 0) return true; // not a literal IP -> fail closed
-  if (v === 6) {
-    const bytes = parseIPv6ToBytes(addr);
-    if (bytes) {
-      const emb = embeddedV4(bytes);
-      if (emb && isPrivateV4(emb)) return true;
+    const timeoutMs = options.dnsTimeoutMs ?? DEFAULT_DNS_TIMEOUT_MS;
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 60_000) {
+      throw new FetchGuardError('Invalid DNS timeout');
     }
-    return blocked.check(addr, 'ipv6');
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const lookup = options.lookup ?? ((host: string) => dnsLookup(host, { all: true }));
+      answers = await Promise.race([
+        boundedLookup(hostname, lookup),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new FetchGuardError('DNS resolution timed out')), timeoutMs);
+        }),
+      ]);
+    } catch (error) {
+      if (error instanceof FetchGuardError) throw error;
+      throw new FetchGuardError('DNS resolution failed');
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
-  return isPrivateV4(addr);
+  if (!Array.isArray(answers) || answers.length === 0 || answers.length > MAX_DNS_ANSWERS) {
+    throw new FetchGuardError('DNS returned no usable addresses');
+  }
+  for (const answer of answers) {
+    const family = typeof answer?.address === 'string' ? isIP(answer.address) : 0;
+    if (
+      family === 0 || answer.family !== family || answer.address.includes('%') ||
+      (!options.allowPrivate && isPrivateAddr(answer.address))
+    ) {
+      throw new FetchGuardError('DNS returned an invalid, private or reserved address');
+    }
+  }
+  const selected = answers[0]!;
+  return {
+    url: checked,
+    hostname,
+    address: selected.address,
+    family: selected.family as 4 | 6,
+    port: portOf(checked),
+  };
 }
 
-async function resolveAddresses(host: string): Promise<string[]> {
-  if (isIP(host)) return [host];
-  const res = await lookup(host, { all: true });
-  return res.map((r) => r.address);
-}
+const configuredPolicy = (): FetchUrlPolicy => ({
+  allowPrivate: config.FETCH_ALLOW_PRIVATE,
+  allowedPorts: config.FETCH_ALLOWED_PORTS,
+});
 
-/**
- * Async, DNS-resolving guard for the top-level navigation target. Rejects
- * non-http(s) schemes and any host that resolves to a private/reserved address.
- */
+/** Compatibility preflight; this alone is NOT a connection-level SSRF boundary. */
 export async function assertFetchableUrl(raw: string): Promise<URL> {
-  let u: URL;
-  try {
-    u = new URL(raw);
-  } catch {
-    throw new FetchGuardError('Invalid URL');
-  }
-  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
-    throw new FetchGuardError(`Unsupported protocol "${u.protocol}" (only http and https are allowed)`);
-  }
-  if (config.FETCH_ALLOW_PRIVATE) return u;
-
-  const host = u.hostname.replace(/^\[|\]$/g, '');
-  if (host.toLowerCase() === 'localhost') throw new FetchGuardError('Refusing to fetch localhost');
-
-  let addresses: string[];
-  try {
-    addresses = await resolveAddresses(host);
-  } catch {
-    throw new FetchGuardError(`DNS resolution failed for "${host}"`);
-  }
-  if (addresses.length === 0) throw new FetchGuardError(`No addresses found for "${host}"`);
-  for (const a of addresses) {
-    if (isPrivateAddr(a)) {
-      throw new FetchGuardError(`Refusing to fetch private/reserved address (${host} -> ${a})`);
-    }
-  }
-  return u;
+  const policy = configuredPolicy();
+  const target = await resolveFetchTarget(parseFetchUrl(raw, policy), policy);
+  return target.url;
 }
 
-// Short-lived verdict cache so the per-request route guard can resolve DNS for
-// every request (incl. redirects/subresources, by hostname) without hammering
-// the resolver. This narrows the DNS-rebinding window left by checking only the
-// initial navigation target. Residual TOCTOU is documented in the README.
-const verdictCache = new Map<string, { blocked: boolean; exp: number }>();
-const VERDICT_TTL_MS = 30_000;
-
-/**
- * Per-request guard used by the Playwright router: resolves the host (cached)
- * and blocks non-http(s) schemes plus any private/reserved target. Fails closed.
- */
+/** Compatibility guard. Actual connections must use resolveFetchTarget's IP. */
 export async function isTargetBlocked(raw: string): Promise<boolean> {
-  if (config.FETCH_ALLOW_PRIVATE) return false;
-  let u: URL;
   try {
-    u = new URL(raw);
+    await assertFetchableUrl(raw);
+    return false;
   } catch {
     return true;
   }
-  if (u.protocol !== 'http:' && u.protocol !== 'https:') return true;
-  const host = u.hostname.replace(/^\[|\]$/g, '');
-  if (host.toLowerCase() === 'localhost') return true;
-
-  const now = Date.now();
-  const cached = verdictCache.get(host);
-  if (cached && cached.exp > now) return cached.blocked;
-
-  let result: boolean;
-  try {
-    const addresses = await resolveAddresses(host);
-    result = addresses.length === 0 || addresses.some((a) => isPrivateAddr(a));
-  } catch {
-    result = true; // fail closed on resolution failure
-  }
-  if (verdictCache.size > 1000) verdictCache.clear();
-  verdictCache.set(host, { blocked: result, exp: now + VERDICT_TTL_MS });
-  return result;
 }

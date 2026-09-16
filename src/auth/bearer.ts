@@ -2,7 +2,7 @@ import type { RequestHandler } from 'express';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import type { OAuthServerProvider } from '@modelcontextprotocol/sdk/server/auth/provider.js';
-import { config, SUPPORTED_SCOPES } from '../config.js';
+import { config, OWNER_USER_ID, SUPPORTED_SCOPES } from '../config.js';
 import { logger } from '../logger.js';
 import { timingSafeEqualStr } from '../util.js';
 
@@ -17,7 +17,7 @@ import { timingSafeEqualStr } from '../util.js';
 export function buildAuthMiddleware(provider: OAuthServerProvider): RequestHandler {
   const oauth = requireBearerAuth({
     verifier: provider,
-    requiredScopes: [],
+    requiredScopes: ['mcp:fetch'],
     resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(config.resourceUrl),
   });
 
@@ -35,7 +35,7 @@ export function buildAuthMiddleware(provider: OAuthServerProvider): RequestHandl
           scopes: SUPPORTED_SCOPES.filter((s) => s !== 'offline_access'),
           expiresAt: Math.floor(Date.now() / 1000) + 3600,
           resource: config.resourceUrl,
-          extra: { auth: 'static' },
+          extra: { auth: 'static', sub: OWNER_USER_ID },
         };
         logger.debug('authenticated via static bearer token');
         return next();
