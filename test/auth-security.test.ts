@@ -41,6 +41,25 @@ describe('OAuth HTTP security', () => {
   });
   afterAll(async () => { await srv.close(); });
 
+  it('issues a client secret that outlives the SDK default of 30 days', async () => {
+    // Only CONFIDENTIAL clients get a secret — the shared test client above
+    // registers as `none`. That asymmetry is the whole point: a connector that
+    // registers confidentially (claude.ai does) silently stops refreshing once
+    // the secret expires, with "Client secret has expired" visible only in the
+    // server log. Without clientRegistrationOptions the SDK hands out 30 days;
+    // observed in production as a monthly manual re-link across four months.
+    const response = await fetch(`${srv.base}/register`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...client(), token_endpoint_auth_method: 'client_secret_post' }),
+    });
+    expect(response.status).toBe(201);
+    const confidential = await response.json() as OAuthClientInformationFull;
+    expect(confidential.client_secret).toBeTruthy();
+    const issued = confidential.client_id_issued_at!;
+    expect(confidential.client_secret_expires_at).toBe(issued + config.CLIENT_SECRET_TTL);
+    expect(confidential.client_secret_expires_at! - issued).toBeGreaterThan(30 * 86400);
+  });
+
   async function authorization(scope?: string): Promise<Response> {
     const params = new URLSearchParams({ client_id: registered.client_id, redirect_uri: callback,
       response_type: 'code', code_challenge: challenge, code_challenge_method: 'S256', state: 'roundtrip-state' });
