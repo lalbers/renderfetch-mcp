@@ -22,6 +22,13 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=1g
+      - /home/pwuser/.cache:rw,nosuid,nodev,size=128m
+    mem_limit: 2g
+    cpus: 2
+    pids_limit: 512
     restart: unless-stopped
 
 volumes:

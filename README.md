@@ -2,10 +2,10 @@
 
 **Give Claude a real browser.** A small, self-hosted [MCP](https://modelcontextprotocol.io)
 server that fetches web pages with headless Chromium, returns clean Markdown, and
-screens everything for prompt injection. With OAuth built in, so it works as a
+treats web output as untrusted and screens it for prompt injection. With OAuth built in, so it works as a
 claude.ai custom connector out of the box (and with Claude Code).
 
-![license](https://img.shields.io/badge/license-MIT-blue) ![node](https://img.shields.io/badge/node-%E2%89%A520-green)
+![license](https://img.shields.io/badge/license-MIT-blue) ![node](https://img.shields.io/badge/node-%E2%89%A522.12-green)
 
 ## Why this exists
 
@@ -15,14 +15,15 @@ pages, and claude.ai connectors require OAuth 2.1. This server fixes both:
 - **real Chromium browser**: to let modern pages actually render
 - **own OAuth 2.1 server:** so no external auth provider needed
 - **filter against prompt injections:** it treats every fetched page as untrusted and filters injection attempts
-  before Claude ever sees them.
+  before returning content. This reduces risk but cannot guarantee that a model ignores hostile instructions.
 
 ## Features
 
 - 🌐 **Real headless browser** (Playwright/Chromium): Runs JavaScript, can wait for a selector.
 - 📝 **Clean output:** main content extraction to Markdown (default), or text / HTML.
 - 🔐 **Self-contained OAuth 2.1:** dynamic client registration, PKCE, refresh-token rotation. Plus an optional static token for headless/automation.
-- 🛡️ **Safety built in:** prompt-injection filter with unguessable content boundaries, and an SSRF guard that blocks internal / loopback / cloud-metadata targets.
+- 🛡️ **Defense in depth:** DNS-pinned per-render egress proxy, normalized injection screening, sanitized output, bounded rendering, and client-bound MCP sessions.
+- 🍪 **Cookie cleanup:** hides recognized consent overlays in the output snapshot without clicking buttons or changing consent.
 - 🧰 **One container:** rootless-Podman (or Docker) friendly, sits behind any reverse proxy.
 - 👤 **Single-user by design:** one login gates everything. Perfect for a personal connector.
 
@@ -71,6 +72,9 @@ podman compose up -d --build        # or: docker compose up -d --build
 podman run -d --name renderfetch-mcp --restart unless-stopped \
   --env-file .env -v renderfetch-data:/data \
   --shm-size=2g --init --cap-drop=ALL --security-opt=no-new-privileges \
+  --read-only --memory=2g --cpus=2 --pids-limit=512 \
+  --tmpfs=/tmp:rw,nosuid,nodev,size=1g \
+  --tmpfs=/home/pwuser/.cache:rw,nosuid,nodev,size=128m \
   -p 127.0.0.1:10120:8080 localhost/renderfetch-mcp:latest
 ```
 
@@ -119,13 +123,15 @@ Then just ask: *"Fetch https://example.com and summarize it."*
 | `wait_ms` | extra wait after load, for slow JS pages |
 | `wait_for_selector` | wait until this CSS selector appears |
 | `css_selector` | extract just this part of the page |
-| `max_chars` | cap the returned length |
+| `max_chars` | cap page content after screening the full bounded extraction |
+| `cookie_banner` | `hide` (default): remove recognized cookie overlays from the output snapshot; `off`: retain them |
 
 ### What comes back
 
 The page text is returned **twice**: as a text block in `content`, and as
-`structuredContent.text` alongside the metadata (`final_url`, `http_status`,
-`title`, `truncated`, `format`, `filter`).
+`structuredContent.text` alongside server-generated metadata (`http_status`,
+`truncated`, `format`, `filter`, `provenance`, `cookie_banner`). Titles and source URLs
+are **inside the untrusted text envelope only**, not authoritative metadata fields.
 
 That duplication is deliberate. Some MCP clients render only
 `structuredContent` when the field is present — the claude.ai connector began
@@ -134,10 +140,14 @@ metadata alone therefore reached the model with no page text at all, while the
 server log showed a perfectly successful fetch. Clients that ignore
 `structuredContent` still read `content`, so both kinds are served.
 
-Errors are returned as clear objects, never thrown.
+Errors use fixed diagnostics without reflecting raw browser errors, URLs or titles.
+HTML output is sanitized, not a raw page dump. Images are removed from extracted
+output, and safe relative links become absolute. Cookie cleanup is cosmetic only: it
+does not accept or reject consent, bypass access controls, or modify the live page.
 
 An optional `screenshot` tool can be turned on with `SCREENSHOT_ENABLED=true`
-(off by default because images are token-expensive).
+(off by default). Images are token-expensive and may contain visual prompt injection
+that text preflight cannot detect. Screenshots retain the original page appearance.
 
 ## Configuration
 
@@ -151,7 +161,11 @@ for the full list. The essentials:
 | `JWT_SECRET` | signs access tokens (use a long random value) |
 | `STATIC_BEARER_TOKEN` | optional bearer for headless clients; leave empty to disable |
 | `OAUTH_ONLY` | set `true` to allow OAuth only (disables the static token) |
-| `FILTER_MODE` | `strict` (block risky pages) or `lenient` (sanitize only) |
+| `FILTER_MODE` | `strict` (block risky pages) or weaker `lenient` (sanitize and label) |
+| `FETCH_ALLOWED_PORTS` | destination ports, default `80,443`; private override does not bypass this |
+| `ALLOWED_ORIGINS` | additional exact browser-client origins; server origin is always allowed |
+| `TRUST_PROXY` | exact trusted proxy IPs/CIDRs; empty means no forwarded-header trust |
+| `CHROMIUM_NO_SANDBOX` | default `false`; container example explicitly opts out where required |
 
 Data (registered clients + tokens) lives in a SQLite DB inside the `renderfetch-data`
 volume. Reset everything with `podman volume rm renderfetch-data` (it re-creates on
@@ -159,10 +173,27 @@ next start; clients simply re-register).
 
 ## Security
 
-In short: every fetched page is untrusted data, wrapped in an unguessable
-boundary and screened for injection; the fetcher can only reach the public
-internet (no LAN / loopback / cloud-metadata); and access requires OAuth or a
-static token. Full model and how to report issues: [SECURITY.md](SECURITY.md).
+Every fetched page is untrusted. A per-render proxy validates and pins network
+destinations; page text is sanitized, screened, and labeled. Neither regex/ML filters
+nor random boundaries guarantee prompt-injection immunity. An unsandboxed browser
+sharing the server UID is also not a strong isolation boundary for OAuth secrets.
+For high assurance, use a separate browser worker and network-level egress policy.
+See [SECURITY.md](SECURITY.md) and the [reviewed plan](docs/SECURITY_PLAN.md).
+
+### Migration notes
+
+- Node **22.12+** is required (Node 24 recommended). Use the committed lockfile.
+- `structuredContent.title` and `.final_url` are removed; read the fenced text instead.
+- Existing tokens without `mcp:fetch` must reconnect. Refresh requires `offline_access`.
+- Set explicit `ALLOWED_ORIGINS` for browser tools such as MCP Inspector, and
+  `TRUST_PROXY` for your actual proxy address if per-IP limiting needs forwarded IPs.
+- Nonstandard destination ports require `FETCH_ALLOWED_PORTS`. Unsafe schemes and
+  URL credentials are rejected even with private access enabled.
+- JavaScript still runs, but service workers, WebSockets and write-method requests
+  are blocked. Some POST-backed applications will render incompletely.
+- Short/example credentials, invalid booleans and out-of-range settings now fail
+  startup. An empty static token correctly disables that authentication path.
+- Cookie cleanup defaults to `hide`; use `cookie_banner: "off"` for unmodified consent text.
 
 ## Develop & test
 
@@ -170,13 +201,14 @@ No host installs needed, run the suite in a throwaway container:
 
 ```bash
 tar -cf - src test package.json package-lock.json tsconfig.json vitest.config.ts | \
-  podman run --rm -i mcr.microsoft.com/playwright:v1.60.0-noble sh -c '
+  podman run --rm -i --shm-size=1g --init mcr.microsoft.com/playwright:v1.60.0-noble sh -c '
     apt-get update -q && apt-get install -yq --no-install-recommends python3 make g++ >/dev/null &&
     mkdir -p /app && cd /app && tar -xf - &&
     npm ci && npm run build && RUN_E2E=1 npm test'
 ```
 
-Or locally with Node ≥ 20: `npm install && npm run build && npm test`.
+Or locally with Node ≥ 22.12: `npm ci && npm run build && npm test`.
+Set `RUN_E2E=1` for real-browser security regressions. CI runs these too.
 After building the image, `scripts/container-smoke.mjs` (run inside the image)
 does a real render → extract → filter check.
 

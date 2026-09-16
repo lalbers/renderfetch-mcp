@@ -28,7 +28,7 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
 # Persistent OAuth/token store lives under /data (a mounted volume at runtime).
-RUN mkdir -p /data && chown -R pwuser:pwuser /app /data
+RUN mkdir -p /data && chown pwuser:pwuser /data
 USER pwuser
 EXPOSE 8080
 CMD ["node", "dist/index.js"]

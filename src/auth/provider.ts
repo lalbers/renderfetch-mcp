@@ -11,10 +11,11 @@ import type {
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import {
   InvalidRequestError,
+  InvalidScopeError,
   InvalidGrantError,
   InvalidTokenError,
 } from '@modelcontextprotocol/sdk/server/auth/errors.js';
-import { config } from '../config.js';
+import { config, SUPPORTED_SCOPES } from '../config.js';
 import { logger } from '../logger.js';
 import { SqliteClientsStore } from '../store/clients.js';
 import { getAuthCode, consumeAuthCode } from '../store/codes.js';
@@ -23,7 +24,7 @@ import {
   getRefreshTokenRow,
   rotateRefreshToken,
   revokeRefreshToken,
-  revokeRefreshTokensForClient,
+  revokeRefreshTokenFamily,
 } from '../store/tokens.js';
 import { signAccessToken, verifyAccessTokenJwt } from './jwt.js';
 import { signConsentRequest } from './jwt.js';
@@ -60,24 +61,32 @@ export class RenderfetchOAuthProvider implements OAuthServerProvider {
     if (!resourceMatches(params.resource)) {
       throw new InvalidRequestError(`Unsupported resource: ${params.resource?.href ?? ''}`);
     }
+    const requestedScopes = params.scopes?.length ? params.scopes : ['mcp:fetch'];
+    if (!requestedScopes.includes('mcp:fetch') || requestedScopes.some((scope) => !SUPPORTED_SCOPES.includes(scope))) {
+      throw new InvalidScopeError('mcp:fetch is required; unsupported scopes are not allowed');
+    }
+    if (!/^[A-Za-z0-9_-]{43}$/.test(params.codeChallenge)) {
+      throw new InvalidRequestError('A valid S256 code challenge is required');
+    }
+    if ((params.state?.length ?? 0) > 2048) throw new InvalidRequestError('state is too long');
     const reqToken = await signConsentRequest({
       clientId: client.client_id,
       clientName: client.client_name,
       redirectUri: params.redirectUri,
       codeChallenge: params.codeChallenge,
-      scopes: params.scopes ?? [],
+      scopes: [...new Set(requestedScopes)],
       state: params.state,
-      resource: params.resource?.href,
+      resource: config.resourceUrl.href,
     });
     res.redirect(302, `/consent?req=${encodeURIComponent(reqToken)}`);
   }
 
   async challengeForAuthorizationCode(
-    _client: OAuthClientInformationFull,
+    client: OAuthClientInformationFull,
     authorizationCode: string,
   ): Promise<string> {
     const code = getAuthCode(authorizationCode);
-    if (!code) throw new InvalidGrantError('Invalid or expired authorization code');
+    if (!code || code.clientId !== client.client_id) throw new InvalidGrantError('Invalid or expired authorization code');
     return code.codeChallenge;
   }
 
@@ -99,11 +108,12 @@ export class RenderfetchOAuthProvider implements OAuthServerProvider {
     if (!resourceMatches(resource)) {
       throw new InvalidRequestError('resource does not match the authorization request');
     }
-    // Bind the token request's resource to the one captured at authorization time.
-    if (code.resource && resource && stripSlash(resource.href) !== stripSlash(code.resource)) {
-      throw new InvalidRequestError('resource does not match the authorization request');
+    // An old grant must not silently migrate to a different server/resource.
+    if (code.resource !== config.resourceUrl.href || !code.scopes.includes('mcp:fetch') ||
+        new Set(code.scopes).size !== code.scopes.length || code.scopes.some((scope) => !SUPPORTED_SCOPES.includes(scope))) {
+      throw new InvalidGrantError('Authorization grant is no longer valid; authorize again');
     }
-    consumeAuthCode(authorizationCode);
+    if (!consumeAuthCode(authorizationCode)) throw new InvalidGrantError('Authorization code was already consumed');
     return this.issueTokens(client.client_id, code.scopes, code.userId);
   }
 
@@ -120,37 +130,52 @@ export class RenderfetchOAuthProvider implements OAuthServerProvider {
     }
     if (row.revoked) {
       // Replay of an already-rotated/revoked refresh token => possible theft.
-      // Revoke the whole token family for this client (RFC 9700 reuse detection).
-      revokeRefreshTokensForClient(row.clientId);
+      // Revoke only this authorization grant (RFC 9700 reuse detection).
+      revokeRefreshTokenFamily(row.familyId, row.clientId);
       logger.warn(
         { client_id: row.clientId },
-        'refresh token reuse detected; revoked all refresh tokens for client',
+        'refresh token reuse detected; revoked grant family',
       );
       throw new InvalidGrantError('Refresh token has been revoked');
     }
-    if (row.expiresAt < nowSec()) throw new InvalidGrantError('Refresh token expired');
+    if (row.expiresAt <= nowSec()) throw new InvalidGrantError('Refresh token expired');
     if (!resourceMatches(resource)) {
       throw new InvalidRequestError('resource does not match the original grant');
     }
+    if (row.resource !== config.resourceUrl.href || !row.scopes.includes('mcp:fetch') ||
+        !row.scopes.includes('offline_access') || new Set(row.scopes).size !== row.scopes.length || row.scopes.some((scope) => !SUPPORTED_SCOPES.includes(scope))) {
+      throw new InvalidGrantError('Refresh grant is no longer valid; authorize again');
+    }
     // Down-scope only (requested scopes must be a subset of the original grant).
     let grantScopes = row.scopes;
-    if (scopes && scopes.length) {
+    if (scopes !== undefined) {
+      if (!scopes.includes('mcp:fetch')) throw new InvalidScopeError('mcp:fetch is required');
       for (const s of scopes) {
         if (!row.scopes.includes(s)) {
           throw new InvalidGrantError(`scope was not originally granted: ${s}`);
         }
       }
-      grantScopes = scopes;
+      grantScopes = [...new Set(scopes)];
     }
     // Rotate the refresh token (mandatory for public clients): the new token is
     // returned and the old one is revoked + linked in the same transaction.
-    const newRefresh = rotateRefreshToken(refreshToken, {
-      clientId: client.client_id,
-      scopes: grantScopes,
-      resource: config.resourceUrl.href,
-      userId: row.userId,
-      ttlSeconds: config.REFRESH_TOKEN_TTL,
-    });
+    let newRefresh: string | undefined;
+    if (grantScopes.includes('offline_access')) {
+      newRefresh = rotateRefreshToken(refreshToken, {
+        clientId: client.client_id,
+        scopes: grantScopes,
+        resource: config.resourceUrl.href,
+        userId: row.userId,
+        ttlSeconds: config.REFRESH_TOKEN_TTL, // rotation retains the original absolute expiry
+      });
+      if (!newRefresh) {
+        revokeRefreshTokenFamily(row.familyId, client.client_id);
+        throw new InvalidGrantError('Refresh token was already consumed');
+      }
+    } else if (!revokeRefreshToken(refreshToken, client.client_id)) {
+      revokeRefreshTokenFamily(row.familyId, client.client_id);
+      throw new InvalidGrantError('Refresh token was already consumed');
+    }
     const at = await signAccessToken({
       clientId: client.client_id,
       scopes: grantScopes,
@@ -175,6 +200,7 @@ export class RenderfetchOAuthProvider implements OAuthServerProvider {
         scopes: v.scopes,
         expiresAt: v.expSec,
         resource: new URL(v.resource),
+        extra: { auth: 'oauth', sub: v.sub },
       };
     } catch {
       // Surface as a 401 with WWW-Authenticate (handled by requireBearerAuth).
@@ -185,10 +211,12 @@ export class RenderfetchOAuthProvider implements OAuthServerProvider {
   // Advertising this method makes mcpAuthRouter mount /revoke and the
   // revocation_endpoint in metadata.
   async revokeToken(
-    _client: OAuthClientInformationFull,
+    client: OAuthClientInformationFull,
     request: OAuthTokenRevocationRequest,
   ): Promise<void> {
-    if (request.token) revokeRefreshToken(request.token);
+    if (!request.token) return;
+    const row = getRefreshTokenRow(request.token);
+    if (row?.clientId === client.client_id) revokeRefreshTokenFamily(row.familyId, client.client_id);
   }
 
   private async issueTokens(
@@ -196,13 +224,13 @@ export class RenderfetchOAuthProvider implements OAuthServerProvider {
     scopes: string[],
     userId: string,
   ): Promise<OAuthTokens> {
-    const refresh = createRefreshToken({
+    const refresh = scopes.includes('offline_access') ? createRefreshToken({
       clientId,
       scopes,
       resource: config.resourceUrl.href,
       userId,
       ttlSeconds: config.REFRESH_TOKEN_TTL,
-    });
+    }) : undefined;
     const at = await signAccessToken({ clientId, scopes, userId });
     return {
       access_token: at.token,
