@@ -41,6 +41,9 @@ export function createApp(): Express {
       resourceServerUrl: config.resourceUrl,
       scopesSupported: SUPPORTED_SCOPES,
       resourceName: 'renderfetch-mcp',
+      // Without this the SDK hands out 30-day client secrets; see
+      // CLIENT_SECRET_TTL in config-schema.ts for why that is a trap.
+      clientRegistrationOptions: { clientSecretExpirySeconds: config.CLIENT_SECRET_TTL },
     }),
   );
 

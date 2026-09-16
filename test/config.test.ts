@@ -10,13 +10,15 @@ describe('configuration security', () => {
     expect(result.FETCH_ALLOWED_PORTS).toEqual([80, 443]);
     expect(result.TRUST_PROXY).toEqual([]);
     expect(result.CHROMIUM_NO_SANDBOX).toBe(false);
+    expect(result.CLIENT_SECRET_TTL).toBe(31536000);
   });
   it.each(['tru', 'enabled', 'nope'])('rejects typoed security boolean %s', (v) => {
     expect(ConfigSchema.safeParse({ ...base, OAUTH_ONLY: v }).success).toBe(false);
   });
   it.each([['BROWSER_CONCURRENCY', 0], ['BROWSER_MAX_QUEUE', -1], ['NAV_TIMEOUT_MS', -1],
     ['MAX_CHARS_DEFAULT', 500001], ['FETCH_ALLOWED_PORTS', '80,65536'], ['PORT', 0],
-    ['TRUST_PROXY', '1'], ['TRUST_PROXY', '127.0.0.1/999'], ['ALLOWED_ORIGINS', 'https://example.com/path']])
+    ['TRUST_PROXY', '1'], ['TRUST_PROXY', '127.0.0.1/999'], ['ALLOWED_ORIGINS', 'https://example.com/path'],
+    ['CLIENT_SECRET_TTL', 0], ['CLIENT_SECRET_TTL', 3600]])
     ('rejects invalid %s', (key, value) => expect(ConfigSchema.safeParse({ ...base, [key]: value }).success).toBe(false));
   it.each(['https://user:password@foo.com', 'https://foo.com/path', 'https://foo.com?x=1',
     'http://foo.com', 'http://[::1]:8080', 'HTTP://[0:0:0:0:0:0:0:1]:8080', 'https://foo.com/#fragment', 'file:///tmp/test'])('rejects invalid public origin %s', (url) => {
