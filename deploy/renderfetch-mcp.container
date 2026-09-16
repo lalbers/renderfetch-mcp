@@ -17,7 +17,7 @@ PublishPort=127.0.0.1:10120:8080
 DropCapability=ALL
 NoNewPrivileges=true
 ShmSize=2g
-PodmanArgs=--init
+PodmanArgs=--init --read-only --memory=2g --cpus=2 --pids-limit=512 --tmpfs=/tmp:rw,nosuid,nodev,size=1g --tmpfs=/home/pwuser/.cache:rw,nosuid,nodev,size=128m
 
 [Service]
 Restart=on-failure

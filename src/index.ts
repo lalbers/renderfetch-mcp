@@ -7,6 +7,8 @@ import { warmupDefender } from './filter/defender.js';
 import { closeAllTransports } from './mcp/transport.js';
 
 async function main(): Promise<void> {
+  // An explicitly enabled security detector must be ready before serving requests.
+  await warmupDefender();
   const app = createApp();
 
   const server = app.listen(config.PORT, config.BIND_HOST, () => {
@@ -23,12 +25,11 @@ async function main(): Promise<void> {
       'renderfetch-mcp listening',
     );
   });
-  // Keep long-lived SSE streams from being torn down by Node's timeouts.
-  server.requestTimeout = 0;
-  server.headersTimeout = 65_000;
+  // Bound request-body receipt; these limits do not terminate SSE response streams.
+  server.requestTimeout = 30_000;
+  server.headersTimeout = 15_000;
 
   // Warm heavy subsystems in the background (don't block accepting connections).
-  warmupDefender().catch((err) => logger.warn({ err }, 'defender warmup error'));
   warmupBrowser().catch((err) => logger.warn({ err }, 'browser warmup error'));
 
   // Periodic cleanup of expired auth codes / refresh tokens.
