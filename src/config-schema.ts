@@ -50,6 +50,16 @@ export const ConfigSchema = z.object({
   REFRESH_TOKEN_TTL: intEnv(2592000, 60, 7776000),
   AUTH_CODE_TTL: intEnv(600, 30, 600),
   CONSENT_REQUEST_TTL: intEnv(600, 30, 600),
+  // Lifetime of a DCR client secret. The SDK defaults to 30 days, which is a
+  // trap for connectors that have no secret-rotation flow: the registration
+  // keeps working until the secret expires, then every refresh fails with
+  // "Client secret has expired" and the user has to re-link by hand, with
+  // nothing in the UI naming the cause. Observed here as a monthly re-link
+  // of the same connector across four months. A year keeps the secret
+  // finite without making that a routine. Minimum one day; 0 is not offered
+  // on purpose — a secret that never expires should be a deliberate fork,
+  // not a config typo.
+  CLIENT_SECRET_TTL: intEnv(31536000, 86400, 315360000),
   OAUTH_MAX_CLIENTS: intEnv(1000, 1, 10000),
   MCP_SESSION_TTL_MS: intEnv(900000, 1000, 86400000),
   MCP_MAX_SESSIONS: intEnv(100, 1, 1000),
