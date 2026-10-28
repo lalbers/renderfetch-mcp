@@ -1,0 +1,9 @@
+renderfetch-mcp
+Copyright (c) 2026 Leon Albers. Licensed under the MIT License (see LICENSE).
+
+deploy/seccomp-chromium.json is derived from the default seccomp profile of
+containers/common (pkg/seccomp/seccomp.json; now developed in
+https://github.com/containers/container-libs), Copyright The containers authors,
+licensed under the Apache License, Version 2.0 (see LICENSES/Apache-2.0.txt).
+The only modification, made by scripts/seccomp-chromium.mjs, allows chroot
+without CAP_SYS_CHROOT.

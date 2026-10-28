@@ -1,9 +1,13 @@
-// In-container smoke test: real Chromium render -> extraction -> injection filter.
-// Run it inside the built image:
-//   podman run --rm --shm-size=1g --init \
+// In-container smoke test: real Chromium render -> extraction -> injection filter,
+// with the Chromium sandbox enabled (checked via the zygote's PID namespace).
+// Run it inside the built image with the deployment's seccomp profile:
+//   podman run --rm --shm-size=1g --init --cap-drop=ALL --security-opt=no-new-privileges \
+//     --security-opt seccomp="$PWD/deploy/seccomp-chromium.json" \
 //     -v "$PWD/scripts/container-smoke.mjs":/smoke.mjs:ro,Z \
 //     localhost/renderfetch-mcp:latest node /smoke.mjs
+// CHROMIUM_NO_SANDBOX=true skips the sandbox check (e.g. without the profile).
 import http from 'node:http';
+import { readdirSync, readFileSync } from 'node:fs';
 
 // Minimal config so src/config.js validates; allow loopback for the test server.
 process.env.PUBLIC_BASE_URL ||= 'https://mcp.test.example';
@@ -13,7 +17,7 @@ process.env.JWT_SECRET ||= 'test-secret-test-secret-test-secret-0123456789';
 process.env.DB_PATH = '/tmp/e2e.db';
 process.env.LOG_LEVEL = 'warn';
 process.env.FETCH_ALLOW_PRIVATE = 'true';
-process.env.CHROMIUM_NO_SANDBOX = 'true'; // explicit disposable-container test only
+process.env.CHROMIUM_NO_SANDBOX ??= 'false';
 
 const { renderPage, closeBrowser } = await import('/app/dist/fetch/browser.js');
 const { extract } = await import('/app/dist/fetch/extract.js');
@@ -59,6 +63,22 @@ try {
   check('js-render-heading', gx.content.includes('Rendered Heading'), gx.content.slice(0, 80));
   check('js-render-bold', /\*\*JavaScript\*\*/.test(gx.content));
   check('js-render-list', /-\s+one/.test(gx.content));
+
+  // The namespace sandbox starts the renderer zygote in fresh user/PID namespaces,
+  // so its NSpid has an extra level. Unsandboxed, it has none. The separate
+  // --no-zygote-sandbox zygote (GPU/utility helpers) is unsandboxed by design.
+  if (!config.CHROMIUM_NO_SANDBOX) {
+    const depth = (pid) => readFileSync(`/proc/${pid}/status`, 'utf8').match(/^NSpid:(.*)$/m)[1].trim().split(/\s+/).length;
+    const zygotes = readdirSync('/proc').filter((pid) => /^\d+$/.test(pid)).flatMap((pid) => {
+      try {
+        // Chromium rewrites its process title, so args may be space- or NUL-separated.
+        const args = readFileSync(`/proc/${pid}/cmdline`, 'utf8').split(/[\0\s]+/);
+        return args.includes('--type=zygote') && !args.includes('--no-zygote-sandbox') ? [depth(pid)] : [];
+      } catch { return []; }
+    });
+    check('chromium-sandbox-active', zygotes.length > 0 && zygotes.every((d) => d > depth('self')),
+      JSON.stringify({ own: depth('self'), zygotes }));
+  }
 
   const gf = await filterContent(gx.content, 'fetch_url', good.finalUrl);
   check('benign-allowed', gf.allowed === true, gf.riskLevel);

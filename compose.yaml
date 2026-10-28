@@ -22,6 +22,8 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+      # Lets Chromium run with its sandbox despite cap_drop ALL (see SECURITY.md).
+      - seccomp=./deploy/seccomp-chromium.json
     read_only: true
     tmpfs:
       - /tmp:rw,nosuid,nodev,size=1g
