@@ -31,6 +31,7 @@ describe('configuration security', () => {
   it('rejects placeholder and short credentials', () => {
     expect(ConfigSchema.safeParse({ ...base, AUTH_PASSWORD: 'change-me-to-a-long-passphrase' }).success).toBe(false);
     expect(ConfigSchema.safeParse({ ...base, STATIC_BEARER_TOKEN: 'short' }).success).toBe(false);
+    expect(ConfigSchema.safeParse({ ...base, STATIC_BEARER_TOKEN: 'two words that are long enough together' }).success).toBe(false);
     expect(ConfigSchema.safeParse({ ...base, JWT_SECRET: ' '.repeat(32) }).success).toBe(false);
   });
 });

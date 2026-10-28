@@ -73,6 +73,15 @@ describe('MCP transport security (real HTTP + SDK)', () => {
   const initialize = (token: string, origin?: string) => request(token, 'POST', undefined, initializeBody, origin);
   const ping = (token: string, session: string) => request(token, 'POST', session, { jsonrpc: '2.0', id: 2, method: 'ping' });
 
+  it('accepts the static bearer only as one well-formed token', async () => {
+    const call = (authorization: string) => fetch(`${srv.base}/mcp`, { method: 'POST',
+      headers: { authorization, accept: 'application/json, text/event-stream', 'content-type': 'application/json' },
+      body: JSON.stringify(initializeBody) }).then(async (r) => { await r.text(); return r.status; });
+    expect(await call(`bearer \t ${staticToken}`)).toBe(200);
+    expect(await call(`Bearer ${staticToken} extra`)).toBe(401);
+    expect(await call(`Bearer ${staticToken}x`)).toBe(401);
+  });
+
   it('binds GET, POST and DELETE to client + subject without revealing foreign sessions', async () => {
     const started = await initialize(tokenA);
     expect(started.status).toBe(200);
