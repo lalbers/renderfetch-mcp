@@ -2,6 +2,7 @@
 #   ./build.sh                                      # build localhost/renderfetch-mcp:latest
 #   cp deploy/renderfetch-mcp.container ~/.config/containers/systemd/
 #   cp .env ~/.config/renderfetch-mcp.env
+#   cp deploy/seccomp-chromium.json ~/.config/renderfetch-mcp-seccomp.json   # re-copy after updates
 #   systemctl --user daemon-reload && systemctl --user start renderfetch-mcp
 [Unit]
 Description=renderfetch-mcp — headless web-fetch MCP server
@@ -16,6 +17,8 @@ Volume=renderfetch-data:/data
 PublishPort=127.0.0.1:10120:8080
 DropCapability=ALL
 NoNewPrivileges=true
+# Lets Chromium run with its sandbox despite DropCapability=ALL (see SECURITY.md).
+SeccompProfile=%h/.config/renderfetch-mcp-seccomp.json
 ShmSize=2g
 PodmanArgs=--init --read-only --memory=2g --cpus=2 --pids-limit=512 --tmpfs=/tmp:rw,nosuid,nodev,size=1g --tmpfs=/home/pwuser/.cache:rw,nosuid,nodev,size=128m
 

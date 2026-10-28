@@ -72,6 +72,7 @@ podman compose up -d --build        # or: docker compose up -d --build
 podman run -d --name renderfetch-mcp --restart unless-stopped \
   --env-file .env -v renderfetch-data:/data \
   --shm-size=2g --init --cap-drop=ALL --security-opt=no-new-privileges \
+  --security-opt seccomp=deploy/seccomp-chromium.json \
   --read-only --memory=2g --cpus=2 --pids-limit=512 \
   --tmpfs=/tmp:rw,nosuid,nodev,size=1g \
   --tmpfs=/home/pwuser/.cache:rw,nosuid,nodev,size=128m \
@@ -82,6 +83,7 @@ podman run -d --name renderfetch-mcp --restart unless-stopped \
 # systemd (Podman Quadlet)
 cp deploy/renderfetch-mcp.container ~/.config/containers/systemd/
 cp .env ~/.config/renderfetch-mcp.env
+cp deploy/seccomp-chromium.json ~/.config/renderfetch-mcp-seccomp.json
 systemctl --user daemon-reload && systemctl --user start renderfetch-mcp
 ```
 
@@ -165,7 +167,7 @@ for the full list. The essentials:
 | `FETCH_ALLOWED_PORTS` | destination ports, default `80,443`; private override does not bypass this |
 | `ALLOWED_ORIGINS` | additional exact browser-client origins; server origin is always allowed |
 | `TRUST_PROXY` | exact trusted proxy IPs/CIDRs; required behind a reverse proxy (empty: no forwarded-header trust) |
-| `CHROMIUM_NO_SANDBOX` | default `false`; container example explicitly opts out where required |
+| `CHROMIUM_NO_SANDBOX` | default `false`; the container examples keep the sandbox via [`deploy/seccomp-chromium.json`](deploy/seccomp-chromium.json) |
 
 Data (registered clients + tokens) lives in a SQLite DB inside the `renderfetch-data`
 volume. Reset everything with `podman volume rm renderfetch-data` (it re-creates on
@@ -175,9 +177,10 @@ next start; clients simply re-register).
 
 Every fetched page is untrusted. A per-render proxy validates and pins network
 destinations; page text is sanitized, screened, and labeled. Neither regex/ML filters
-nor random boundaries guarantee prompt-injection immunity. An unsandboxed browser
-sharing the server UID is also not a strong isolation boundary for OAuth secrets.
-For high assurance, use a separate browser worker and network-level egress policy.
+nor random boundaries guarantee prompt-injection immunity. In the supplied container
+setups Chromium's renderers run in its sandbox; the browser, GPU and network-service
+processes do not, and they share the container and UID with the OAuth store. For
+high assurance, use a separate browser worker and network-level egress policy.
 See [SECURITY.md](SECURITY.md).
 
 ### Migration notes
@@ -210,8 +213,9 @@ tar -cf - src test package.json package-lock.json tsconfig.json vitest.config.ts
 
 Or locally with Node ≥ 22.22.2 (or ≥ 24.15): `npm ci && npm run build && npm test`.
 Set `RUN_E2E=1` for real-browser security regressions. CI runs these too.
-After building the image, `scripts/container-smoke.mjs` (run inside the image)
-does a real render → extract → filter check.
+After building the image, `scripts/container-smoke.mjs` (run inside the image with
+the seccomp profile, see its header) does a real render → extract → filter check
+and verifies that Chromium's sandbox is active.
 
 ## Tech
 
