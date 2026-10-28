@@ -4,7 +4,7 @@ import { registerFetchTools } from '../fetch/tool.js';
 /** A fresh McpServer instance per session (tools are stateless). */
 export function buildMcpServer(): McpServer {
   const server = new McpServer(
-    { name: 'renderfetch-mcp', version: '1.0.0' },
+    { name: 'renderfetch-mcp', version: '2.0.0' },
     {
       capabilities: { tools: {} },
       instructions:

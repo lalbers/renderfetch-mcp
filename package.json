@@ -1,6 +1,6 @@
 {
   "name": "renderfetch-mcp",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "description": "Self-hosted remote MCP server: headless-browser web fetch with OAuth 2.1 and prompt-injection filtering.",
