@@ -21,6 +21,11 @@ jobs:
         with:
           node-version: "24"
           cache: npm
+      - name: Containerfile uses the Playwright image matching package.json
+        run: |
+          v=$(node -p "require('./package.json').dependencies.playwright")
+          test "$(grep -c "^FROM mcr.microsoft.com/playwright:v$v-noble " Containerfile)" -eq 2 \
+            || { echo "::error file=Containerfile::base image must be playwright:v$v-noble (both stages)"; exit 1; }
       - run: npm ci
       - run: npm run build
       - run: npm audit --audit-level=high

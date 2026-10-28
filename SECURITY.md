@@ -118,8 +118,9 @@ its volume and backups, including registered client metadata.
    Wire-byte limits cannot prevent every decompression or JavaScript memory bomb;
    DOM limits cannot interrupt all synchronous parsing work. Keep container limits.
 6. Keep the lockfile and Chromium image current. Advisory audits cover known issues
-   only; the npm audit does not scan browser binaries or OS packages. The Defender-scoped Nanoid override pins a patched compatible dependency
-   until an upstream upgrade is separately validated.
+   only; the npm audit does not scan browser binaries or OS packages. Dependabot
+   proposes npm and GitHub Actions updates; bump the `playwright` package and the
+   Containerfile base image tag together by hand.
 
 ## Verification
 

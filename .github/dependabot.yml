@@ -1,0 +1,34 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    # Let fresh releases settle before adopting them (supply-chain caution).
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    groups:
+      # Batch routine bumps; majors still arrive as individual PRs.
+      production:
+        dependency-type: production
+        update-types: [minor, patch]
+      development:
+        dependency-type: development
+        update-types: [minor, patch]
+    ignore:
+      # Must move together with the Containerfile base image tag
+      # (mcr.microsoft.com/playwright:vX.Y.Z-noble): bump both by hand.
+      # Only version updates are ignored; security updates still arrive.
+      - dependency-name: playwright
+        update-types: [version-update:semver-major, version-update:semver-minor, version-update:semver-patch]
+      # Typings track the oldest supported Node major (see engines).
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
