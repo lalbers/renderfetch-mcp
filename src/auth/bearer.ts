@@ -7,6 +7,14 @@ import { logger } from '../logger.js';
 import { timingSafeEqualStr } from '../util.js';
 
 /**
+ * The token from an `Authorization: Bearer <token>` header, or undefined.
+ * Disjoint character classes keep the match linear on hostile headers.
+ */
+export function bearerToken(header: string | undefined): string | undefined {
+  return header ? /^Bearer[ \t]+(\S+)[ \t]*$/i.exec(header)?.[1] : undefined;
+}
+
+/**
  * Dual auth for /mcp:
  *   1. Static bearer token (env) for headless/systemd Claude Code — checked
  *      first, constant-time. Disabled when OAUTH_ONLY=true or no token is set.
@@ -25,9 +33,7 @@ export function buildAuthMiddleware(provider: OAuthServerProvider): RequestHandl
 
   return (req, res, next) => {
     if (staticEnabled) {
-      const header = req.headers.authorization;
-      const match = header ? /^Bearer\s+(.+)$/i.exec(header) : null;
-      const presented = match?.[1];
+      const presented = bearerToken(req.headers.authorization);
       if (presented && timingSafeEqualStr(presented, config.STATIC_BEARER_TOKEN as string)) {
         req.auth = {
           token: presented,

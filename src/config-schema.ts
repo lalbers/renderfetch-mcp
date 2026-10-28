@@ -41,7 +41,8 @@ export const ConfigSchema = z.object({
   AUTH_USERNAME: z.string().min(1).max(200),
   AUTH_PASSWORD: strongSecret(12),
   JWT_SECRET: strongSecret(32),
-  STATIC_BEARER_TOKEN: z.preprocess((v) => unset(v) ? undefined : v, strongSecret(32).optional()),
+  STATIC_BEARER_TOKEN: z.preprocess((v) => unset(v) ? undefined : v, strongSecret(32)
+    .regex(/^[\x21-\x7e]+$/, 'Use printable ASCII without whitespace (it is sent as one header token)').optional()),
   OAUTH_ONLY: boolEnv(false),
   EXTRA_REDIRECT_URIS: listEnv(),
   ALLOWED_ORIGINS: listEnv().refine((values) => values.every(isOrigin), 'Each entry must be a valid origin'),
