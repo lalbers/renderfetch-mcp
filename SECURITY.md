@@ -69,7 +69,12 @@ Use `off` when exact page content matters.
 
 MCP requires OAuth with `mcp:fetch` or an explicitly configured static bearer.
 Authorization uses S256 PKCE, audience/type/claim-validated JWTs, bounded client
-registration, exact redirect rules and one-use consent stored in SQLite. Browser
+registration and one-use consent stored in SQLite. Redirect URIs must match the
+claude.ai callback or an `EXTRA_REDIRECT_URIS` entry exactly, except loopback hosts
+(`localhost`, `127.0.0.1`, `[::1]`), which are accepted over HTTP or HTTPS on any
+port and path for native clients (RFC 8252). Unauthenticated registrations that
+never obtain a token are pruned after `OAUTH_UNUSED_CLIENT_TTL`; a client that
+retries an abandoned flow later must register again. Browser
 origins are checked explicitly. Consent responses are no-store and protected against framing. Valid forms use
 `Referrer-Policy: same-origin` (no cross-origin token leakage) so Chromium preserves
 a usable same-origin POST Origin. Other consent responses use no-referrer.

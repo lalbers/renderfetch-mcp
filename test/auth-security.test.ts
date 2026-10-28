@@ -9,7 +9,7 @@ import { signAccessToken, signConsentRequest, verifyAccessTokenJwt, verifyConsen
 import { RenderfetchOAuthProvider } from '../src/auth/provider.js';
 import { createAuthCode, createAuthCodeForConsent, getAuthCode, consumeAuthCode } from '../src/store/codes.js';
 import { createRefreshToken, getRefreshTokenRow, rotateRefreshToken } from '../src/store/tokens.js';
-import { isAllowedRedirect, SqliteClientsStore } from '../src/store/clients.js';
+import { isAllowedRedirect, SqliteClientsStore, touchClient } from '../src/store/clients.js';
 import { db, pruneExpired, migrate } from '../src/store/db.js';
 import { nowSec } from '../src/util.js';
 
@@ -287,6 +287,50 @@ describe('OAuth store and claim invariants', () => {
       expect(() => store.registerClient(client())).toThrow('capacity');
       expect(store.getClient(allowed.client_id)?.redirect_uris).toEqual([callback]);
     } finally { config.OAUTH_MAX_CLIENTS = previous; }
+  });
+
+  it('prunes registrations that never obtained a token and keeps used ones', () => {
+    const store = new SqliteClientsStore();
+    const clock = Date.now();
+    const unused = store.registerClient(client());
+    const used = store.registerClient(client());
+    touchClient(used.client_id);
+
+    vi.spyOn(Date, 'now').mockReturnValue(clock + (config.OAUTH_UNUSED_CLIENT_TTL - 60) * 1000);
+    pruneExpired();
+    expect(store.getClient(unused.client_id)).toBeDefined();
+
+    vi.spyOn(Date, 'now').mockReturnValue(clock + (config.OAUTH_UNUSED_CLIENT_TTL + 60) * 1000);
+    pruneExpired();
+    expect(store.getClient(unused.client_id)).toBeUndefined();
+
+    // Used clients survive even long idle periods without a refresh grant.
+    vi.spyOn(Date, 'now').mockReturnValue(clock + (config.REFRESH_TOKEN_TTL + 60) * 1000);
+    pruneExpired();
+    expect(store.getClient(used.client_id)).toBeDefined();
+  });
+
+  it('records use on authorization-code exchange', async () => {
+    const provider = new RenderfetchOAuthProvider();
+    const store = new SqliteClientsStore();
+    const fresh = store.registerClient(client());
+    const code = createAuthCode({ clientId: fresh.client_id, redirectUri: callback, codeChallenge: challenge,
+      scopes: ['mcp:fetch'], resource: config.resourceUrl.href, userId: OWNER_USER_ID, ttlSeconds: 60 });
+    await provider.exchangeAuthorizationCode(fresh, code, undefined, callback, config.resourceUrl);
+    const row = db.prepare('SELECT last_used_at FROM clients WHERE client_id = ?').get(fresh.client_id) as { last_used_at: number | null };
+    expect(row.last_used_at).toBeGreaterThanOrEqual(nowSec() - 5);
+  });
+
+  it('marks pre-existing clients as used when adding the last_used_at column', () => {
+    const legacy = new Database(':memory:');
+    try {
+      legacy.exec(`CREATE TABLE clients (client_id TEXT PRIMARY KEY, metadata TEXT NOT NULL,
+        client_id_issued_at INTEGER, created_at INTEGER NOT NULL)`);
+      legacy.prepare('INSERT INTO clients VALUES (?, ?, ?, ?)').run('old', '{}', 1, 1);
+      migrate(legacy);
+      expect((legacy.prepare('SELECT last_used_at FROM clients').get() as { last_used_at: number }).last_used_at)
+        .toBeGreaterThanOrEqual(nowSec() - 5);
+    } finally { legacy.close(); }
   });
 
   it('rejects malformed claims, missing expiry, wrong type, and wrong audience', async () => {
