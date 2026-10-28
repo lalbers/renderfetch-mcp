@@ -5,6 +5,9 @@ server that fetches web pages with headless Chromium, returns clean Markdown, an
 treats web output as untrusted and screens it for prompt injection. With OAuth built in, so it works as a
 claude.ai custom connector out of the box (and with Claude Code).
 
+[![CI](https://github.com/lalbers/renderfetch-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/lalbers/renderfetch-mcp/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/lalbers/renderfetch-mcp/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/lalbers/renderfetch-mcp/actions/workflows/github-code-scanning/codeql)
+[![release](https://img.shields.io/github/v/release/lalbers/renderfetch-mcp)](https://github.com/lalbers/renderfetch-mcp/releases)
 ![license](https://img.shields.io/badge/license-MIT-blue) ![node](https://img.shields.io/badge/node-%E2%89%A522.22-green)
 
 ## Why this exists
@@ -183,21 +186,10 @@ processes do not, and they share the container and UID with the OAuth store. For
 high assurance, use a separate browser worker and network-level egress policy.
 See [SECURITY.md](SECURITY.md).
 
-### Migration notes
+### Upgrading
 
-- Node **22.22.2+**, **24.15+** or **26+** is required (Node 24 recommended). Use the committed lockfile.
-- `structuredContent.title` and `.final_url` are removed; read the fenced text instead.
-- Existing tokens without `mcp:fetch` must reconnect. Refresh requires `offline_access`.
-- Set explicit `ALLOWED_ORIGINS` for browser tools such as MCP Inspector. Behind a
-  reverse proxy, set `TRUST_PROXY` to its address: otherwise all clients share one
-  rate-limit bucket and anyone can lock out the login.
-- Nonstandard destination ports require `FETCH_ALLOWED_PORTS`. Unsafe schemes and
-  URL credentials are rejected even with private access enabled.
-- JavaScript still runs, but service workers, WebSockets and write-method requests
-  are blocked. Some POST-backed applications will render incompletely.
-- Short/example credentials, invalid booleans and out-of-range settings now fail
-  startup. An empty static token correctly disables that authentication path.
-- Cookie cleanup defaults to `hide`; use `cookie_banner: "off"` for unmodified consent text.
+Upgrading from 1.0.0? Read the [upgrade notes in the changelog](CHANGELOG.md#upgrading-from-100)
+first: 2.0.0 tightens defaults and needs a few configuration changes.
 
 ## Develop & test
 
