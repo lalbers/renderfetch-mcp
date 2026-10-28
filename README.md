@@ -5,7 +5,7 @@ server that fetches web pages with headless Chromium, returns clean Markdown, an
 treats web output as untrusted and screens it for prompt injection. With OAuth built in, so it works as a
 claude.ai custom connector out of the box (and with Claude Code).
 
-![license](https://img.shields.io/badge/license-MIT-blue) ![node](https://img.shields.io/badge/node-%E2%89%A522.12-green)
+![license](https://img.shields.io/badge/license-MIT-blue) ![node](https://img.shields.io/badge/node-%E2%89%A522.22-green)
 
 ## Why this exists
 
@@ -182,7 +182,7 @@ See [SECURITY.md](SECURITY.md) and the [reviewed plan](docs/SECURITY_PLAN.md).
 
 ### Migration notes
 
-- Node **22.12+** is required (Node 24 recommended). Use the committed lockfile.
+- Node **22.22.2+**, **24.15+** or **26+** is required (Node 24 recommended). Use the committed lockfile.
 - `structuredContent.title` and `.final_url` are removed; read the fenced text instead.
 - Existing tokens without `mcp:fetch` must reconnect. Refresh requires `offline_access`.
 - Set explicit `ALLOWED_ORIGINS` for browser tools such as MCP Inspector, and
@@ -201,13 +201,13 @@ No host installs needed, run the suite in a throwaway container:
 
 ```bash
 tar -cf - src test package.json package-lock.json tsconfig.json vitest.config.ts | \
-  podman run --rm -i --shm-size=1g --init mcr.microsoft.com/playwright:v1.60.0-noble sh -c '
+  podman run --rm -i --shm-size=1g --init mcr.microsoft.com/playwright:v1.64.1-noble sh -c '
     apt-get update -q && apt-get install -yq --no-install-recommends python3 make g++ >/dev/null &&
     mkdir -p /app && cd /app && tar -xf - &&
     npm ci && npm run build && RUN_E2E=1 npm test'
 ```
 
-Or locally with Node ≥ 22.12: `npm ci && npm run build && npm test`.
+Or locally with Node ≥ 22.22.2 (or ≥ 24.15): `npm ci && npm run build && npm test`.
 Set `RUN_E2E=1` for real-browser security regressions. CI runs these too.
 After building the image, `scripts/container-smoke.mjs` (run inside the image)
 does a real render → extract → filter check.
