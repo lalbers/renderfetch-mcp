@@ -61,6 +61,9 @@ export const ConfigSchema = z.object({
   // not a config typo.
   CLIENT_SECRET_TTL: intEnv(31536000, 86400, 315360000),
   OAUTH_MAX_CLIENTS: intEnv(1000, 1, 10000),
+  // Registrations that never obtain a token are pruned after this many seconds.
+  // At least consent request + auth code lifetime, so a slow first login survives.
+  OAUTH_UNUSED_CLIENT_TTL: intEnv(3600, 1200, 604800),
   MCP_SESSION_TTL_MS: intEnv(900000, 1000, 86400000),
   MCP_MAX_SESSIONS: intEnv(100, 1, 1000),
   MCP_MAX_SESSIONS_PER_CLIENT: intEnv(10, 1, 1000),

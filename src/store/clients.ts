@@ -21,10 +21,16 @@ export function isAllowedRedirect(uri: string): boolean {
 }
 
 const getStmt = db.prepare('SELECT metadata FROM clients WHERE client_id = ?');
+const touchStmt = db.prepare('UPDATE clients SET last_used_at = ? WHERE client_id = ?');
 const countStmt = db.prepare('SELECT COUNT(*) AS count FROM clients');
 const insertStmt = db.prepare(
   'INSERT INTO clients (client_id, metadata, client_id_issued_at, created_at) VALUES (?, ?, ?, ?)',
 );
+
+/** Record a successful token issuance; unused registrations are pruned (see pruneExpired). */
+export function touchClient(clientId: string): void {
+  touchStmt.run(nowSec(), clientId);
+}
 
 export class SqliteClientsStore implements OAuthRegisteredClientsStore {
   getClient(clientId: string): OAuthClientInformationFull | undefined {

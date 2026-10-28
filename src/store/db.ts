@@ -10,7 +10,8 @@ export function migrate(database: Database.Database): void {
       client_id                TEXT PRIMARY KEY,
       metadata                 TEXT NOT NULL,   -- full OAuthClientInformationFull JSON
       client_id_issued_at      INTEGER,
-      created_at               INTEGER NOT NULL
+      created_at               INTEGER NOT NULL,
+      last_used_at             INTEGER          -- last successful token issuance; NULL = never
     );
 
     CREATE TABLE IF NOT EXISTS auth_codes (
@@ -89,6 +90,15 @@ export function migrate(database: Database.Database): void {
     })();
   }
   database.exec('CREATE INDEX IF NOT EXISTS idx_refresh_family ON refresh_tokens(family_id)');
+  const clientColumns = database.prepare('PRAGMA table_info(clients)').all() as Array<{ name: string }>;
+  if (!clientColumns.some((column) => column.name === 'last_used_at')) {
+    // Pre-existing registrations count as used now, so the upgrade cannot prune
+    // a working connector before it has had a chance to refresh.
+    database.transaction(() => {
+      database.exec('ALTER TABLE clients ADD COLUMN last_used_at INTEGER');
+      database.prepare('UPDATE clients SET last_used_at = ?').run(Math.floor(Date.now() / 1000));
+    })();
+  }
 }
 
 function open(): Database.Database {
@@ -126,4 +136,10 @@ export function pruneExpired(): void {
   db.prepare('DELETE FROM consumed_consents WHERE expires_at <= ?').run(now);
   // Keep revoked predecessors until the absolute family expiry for replay detection.
   db.prepare('DELETE FROM refresh_tokens WHERE expires_at <= ?').run(now);
+  // /register is unauthenticated, so junk registrations must not accumulate up to
+  // OAUTH_MAX_CLIENTS and block new connectors. Only the owner's login can mark a
+  // client as used; never-used ones expire. Used clients are kept: deleting them
+  // would turn a later re-authorization into an unexplained "Invalid client_id".
+  db.prepare('DELETE FROM clients WHERE last_used_at IS NULL AND created_at <= ?')
+    .run(now - config.OAUTH_UNUSED_CLIENT_TTL);
 }

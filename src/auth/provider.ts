@@ -17,7 +17,7 @@ import {
 } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { config, SUPPORTED_SCOPES } from '../config.js';
 import { logger } from '../logger.js';
-import { SqliteClientsStore } from '../store/clients.js';
+import { SqliteClientsStore, touchClient } from '../store/clients.js';
 import { getAuthCode, consumeAuthCode } from '../store/codes.js';
 import {
   createRefreshToken,
@@ -181,6 +181,7 @@ export class RenderfetchOAuthProvider implements OAuthServerProvider {
       scopes: grantScopes,
       userId: row.userId,
     });
+    touchClient(client.client_id);
     logger.info({ client_id: client.client_id }, 'refresh token rotated');
     return {
       access_token: at.token,
@@ -232,6 +233,7 @@ export class RenderfetchOAuthProvider implements OAuthServerProvider {
       ttlSeconds: config.REFRESH_TOKEN_TTL,
     }) : undefined;
     const at = await signAccessToken({ clientId, scopes, userId });
+    touchClient(clientId);
     return {
       access_token: at.token,
       token_type: 'bearer',
