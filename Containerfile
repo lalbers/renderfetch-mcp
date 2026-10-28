@@ -4,7 +4,7 @@
 # onnxruntime-node) require. Alpine/musl is not viable for Playwright Chromium
 # or onnxruntime-node. The tag is pinned to match the `playwright` npm version.
 
-FROM mcr.microsoft.com/playwright:v1.60.0-noble AS build
+FROM mcr.microsoft.com/playwright:v1.64.1-noble AS build
 WORKDIR /app
 ENV NODE_ENV=development
 # Build tools so any native module without a matching prebuilt binary can compile.
@@ -19,7 +19,7 @@ COPY src ./src
 RUN npm run build \
  && npm prune --omit=dev
 
-FROM mcr.microsoft.com/playwright:v1.60.0-noble AS runtime
+FROM mcr.microsoft.com/playwright:v1.64.1-noble AS runtime
 WORKDIR /app
 ENV NODE_ENV=production \
     NODE_OPTIONS=--enable-source-maps \
