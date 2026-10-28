@@ -89,8 +89,13 @@ its volume and backups, including registered client metadata.
 ## Deployment requirements and remaining risks
 
 1. Terminate TLS at a trusted reverse proxy. Publish the container only on loopback.
-   Configure `TRUST_PROXY` with the exact proxy IP/CIDR if needed, never a generic
-   hop count or arbitrary internet range. List browser MCP clients explicitly in
+   Behind a proxy, `TRUST_PROXY` is required: set the exact proxy IP/CIDR, never a
+   generic hop count or arbitrary internet range. Without it, every caller shares
+   the proxy's address and the IP-keyed limits on consent, `/authorize`, `/token`
+   and `/register` become one global bucket. Only failed same-origin credential
+   attempts with a valid signed request count toward the login limit, but anyone
+   can obtain such a request, so an attacker can still keep the owner locked out
+   and exhaust the `/token` limit that connectors need for refreshing. List browser MCP clients explicitly in
    `ALLOWED_ORIGINS`; absent Origin remains allowed for server clients.
 2. Chromium's sandbox is enabled by default. Container examples explicitly disable
    it because restricted rootless environments may not support it. Enable it where

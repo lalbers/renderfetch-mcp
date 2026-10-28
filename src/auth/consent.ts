@@ -1,4 +1,4 @@
-import express, { Router, type Response } from 'express';
+import express, { Router, type Request, type Response } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { config, OWNER_USER_ID } from '../config.js';
 import { logger } from '../logger.js';
@@ -11,13 +11,37 @@ export const consentRouter = Router();
 
 // Online-guessing protection: the whole model rests on one credential, so cap
 // login attempts (the SDK rate-limits /authorize|/token|/register, not /consent).
+// Only real credential attempts count, and only when they fail. Behind a reverse
+// proxy without TRUST_PROXY every caller shares one bucket, so counting junk POSTs
+// (foreign Origin, forged or expired request tokens, aborted bodies) would let
+// anyone lock the owner out for free.
 const consentLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 10,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: async (req) => !(await isCredentialAttempt(req)),
+  skipSuccessfulRequests: true,
+  requestWasSuccessful: (_req, res) => res.statusCode !== 401,
   message: 'Too many attempts. Please try again later.',
 });
+
+function requestOrigin(req: Request): string | undefined {
+  if (req.headers.origin !== undefined) return req.headers.origin;
+  if (!req.headers.referer) return undefined;
+  try { return new URL(req.headers.referer).origin; } catch { return undefined; }
+}
+
+/** Same-origin approval carrying a valid signed request: the only POST that tests credentials. */
+async function isCredentialAttempt(req: Request): Promise<boolean> {
+  if (requestOrigin(req) !== config.issuerUrl.origin || req.body?.action !== 'approve') return false;
+  try {
+    await verifyConsentRequest(typeof req.body?.req === 'string' ? req.body.req : '');
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // Consent carries credentials and a signed authorization request: never cache,
 // embed, or leak its query string to another origin.
@@ -121,13 +145,10 @@ consentRouter.get('/consent', async (req, res) => {
   }
 });
 
-consentRouter.post('/consent', consentLimiter, express.urlencoded({ extended: false, limit: '16kb', parameterLimit: 8 }), async (req, res) => {
+// The body is parsed before the limiter so that it can tell credential attempts apart.
+consentRouter.post('/consent', express.urlencoded({ extended: false, limit: '16kb', parameterLimit: 8 }), consentLimiter, async (req, res) => {
   // Form submissions must originate from this consent UI, not another website.
-  let origin = req.headers.origin;
-  if (origin === undefined && req.headers.referer) {
-    try { origin = new URL(req.headers.referer).origin; } catch { /* rejected below */ }
-  }
-  if (origin !== config.issuerUrl.origin) {
+  if (requestOrigin(req) !== config.issuerUrl.origin) {
     res.status(403).type('html').send(errorPage('Invalid consent origin.'));
     return;
   }

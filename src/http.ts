@@ -21,6 +21,19 @@ export function createApp(): Express {
   app.disable('x-powered-by');
   app.set('trust proxy', config.TRUST_PROXY.length ? config.TRUST_PROXY : false);
 
+  // Without TRUST_PROXY, req.ip is the proxy for every caller, so all IP-keyed
+  // limiters (consent and the SDK's /authorize|/token|/register) share one bucket.
+  if (!config.TRUST_PROXY.length) {
+    let warned = false;
+    app.use((req, _res, next) => {
+      if (!warned && req.headers['x-forwarded-for'] !== undefined) {
+        warned = true;
+        logger.warn('X-Forwarded-For received but TRUST_PROXY is empty: all clients share one rate-limit bucket');
+      }
+      next();
+    });
+  }
+
   // Unauthenticated health endpoint.
   app.get('/healthz', (_req, res) => {
     res.status(200).json({ status: 'ok' });

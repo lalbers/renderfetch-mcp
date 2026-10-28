@@ -164,7 +164,7 @@ for the full list. The essentials:
 | `FILTER_MODE` | `strict` (block risky pages) or weaker `lenient` (sanitize and label) |
 | `FETCH_ALLOWED_PORTS` | destination ports, default `80,443`; private override does not bypass this |
 | `ALLOWED_ORIGINS` | additional exact browser-client origins; server origin is always allowed |
-| `TRUST_PROXY` | exact trusted proxy IPs/CIDRs; empty means no forwarded-header trust |
+| `TRUST_PROXY` | exact trusted proxy IPs/CIDRs; required behind a reverse proxy (empty: no forwarded-header trust) |
 | `CHROMIUM_NO_SANDBOX` | default `false`; container example explicitly opts out where required |
 
 Data (registered clients + tokens) lives in a SQLite DB inside the `renderfetch-data`
@@ -185,8 +185,9 @@ See [SECURITY.md](SECURITY.md) and the [reviewed plan](docs/SECURITY_PLAN.md).
 - Node **22.22.2+**, **24.15+** or **26+** is required (Node 24 recommended). Use the committed lockfile.
 - `structuredContent.title` and `.final_url` are removed; read the fenced text instead.
 - Existing tokens without `mcp:fetch` must reconnect. Refresh requires `offline_access`.
-- Set explicit `ALLOWED_ORIGINS` for browser tools such as MCP Inspector, and
-  `TRUST_PROXY` for your actual proxy address if per-IP limiting needs forwarded IPs.
+- Set explicit `ALLOWED_ORIGINS` for browser tools such as MCP Inspector. Behind a
+  reverse proxy, set `TRUST_PROXY` to its address: otherwise all clients share one
+  rate-limit bucket and anyone can lock out the login.
 - Nonstandard destination ports require `FETCH_ALLOWED_PORTS`. Unsafe schemes and
   URL credentials are rejected even with private access enabled.
 - JavaScript still runs, but service workers, WebSockets and write-method requests
