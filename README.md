@@ -178,7 +178,7 @@ destinations; page text is sanitized, screened, and labeled. Neither regex/ML fi
 nor random boundaries guarantee prompt-injection immunity. An unsandboxed browser
 sharing the server UID is also not a strong isolation boundary for OAuth secrets.
 For high assurance, use a separate browser worker and network-level egress policy.
-See [SECURITY.md](SECURITY.md) and the [reviewed plan](docs/SECURITY_PLAN.md).
+See [SECURITY.md](SECURITY.md).
 
 ### Migration notes
 
