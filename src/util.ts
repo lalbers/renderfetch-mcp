@@ -10,17 +10,14 @@ export function sha256hex(input: string): string {
   return createHash('sha256').update(input).digest('hex');
 }
 
-/** Constant-time string compare that never throws and is length-safe. */
+/**
+ * Constant-time string compare that never throws. Comparing fixed-size SHA-256
+ * digests hides the secret's length too, which a length check would leak.
+ */
 export function timingSafeEqualStr(a: string, b: string): boolean {
-  const ab = Buffer.from(a, 'utf8');
-  const bb = Buffer.from(b, 'utf8');
-  if (ab.length !== bb.length) {
-    // Still do a comparison against a fixed-length buffer to avoid leaking
-    // length via early-return timing; result is irrelevant.
-    timingSafeEqual(ab, ab);
-    return false;
-  }
-  return timingSafeEqual(ab, bb);
+  const ad = createHash('sha256').update(a, 'utf8').digest();
+  const bd = createHash('sha256').update(b, 'utf8').digest();
+  return timingSafeEqual(ad, bd);
 }
 
 export function nowSec(): number {
