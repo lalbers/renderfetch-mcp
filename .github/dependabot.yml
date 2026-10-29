@@ -25,6 +25,10 @@ updates:
       # Typings track the oldest supported Node major (see engines).
       - dependency-name: "@types/node"
         update-types: [version-update:semver-major]
+      # Hold TypeScript majors: 7 is the native compiler port, and typescript-eslint
+      # (planned for linting) supports only TypeScript <6.1. Revisit when it does.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
 
   - package-ecosystem: github-actions
     directory: /
