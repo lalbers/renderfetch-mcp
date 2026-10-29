@@ -94,7 +94,7 @@ cp deploy/seccomp-chromium.json ~/.config/renderfetch-mcp-seccomp.json
 systemctl --user daemon-reload && systemctl --user start renderfetch-mcp
 ```
 
-To start it at boot without a login session, run `loginctl enable-linger` once.
+To keep it running after logout and start it at boot, run `loginctl enable-linger` once.
 
 ### Set up the TLS reverse proxy
 
@@ -175,7 +175,7 @@ In the supplied Podman setups, Chromium's renderers run in Chromium's sandbox. T
 
 ## Upgrading from 1.0.0
 
-2.0.0 tightens defaults and needs configuration changes. Set `CHROMIUM_NO_SANDBOX=false` (the 1.0.0 example `.env` had `true`) only after the container loads `deploy/seccomp-chromium.json`. Otherwise Chromium stays unsandboxed. Read the [upgrade notes](CHANGELOG.md#upgrading-from-100) first.
+2.0.0 tightens defaults and needs configuration changes. First make the container load `deploy/seccomp-chromium.json`, then set `CHROMIUM_NO_SANDBOX=false` (now also the default). The 1.0.0 example `.env` set it to `true`, which keeps Chromium unsandboxed. With `false` but without the profile, Chromium cannot start and every fetch fails. Read the [upgrade notes](CHANGELOG.md#upgrading-from-100) before upgrading.
 
 ## Develop and test
 

@@ -1,9 +1,11 @@
 # Podman Quadlet unit (systemd-native). Install:
 #   ./build.sh                                      # build localhost/renderfetch-mcp:latest
+#   mkdir -p ~/.config/containers/systemd
 #   cp deploy/renderfetch-mcp.container ~/.config/containers/systemd/
 #   cp .env ~/.config/renderfetch-mcp.env
 #   cp deploy/seccomp-chromium.json ~/.config/renderfetch-mcp-seccomp.json   # re-copy after updates
 #   systemctl --user daemon-reload && systemctl --user start renderfetch-mcp
+#   loginctl enable-linger                          # once: keep running after logout, start at boot
 [Unit]
 Description=renderfetch-mcp — headless web-fetch MCP server
 After=network-online.target
