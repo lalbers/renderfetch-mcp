@@ -99,7 +99,8 @@ Read [Upgrading from 1.0.0](#upgrading-from-100) before rolling it out.
 First public release: a headless-Chromium `fetch_url` MCP tool with readability
 extraction to Markdown, a self-contained OAuth 2.1 server (dynamic client
 registration, PKCE, refresh-token rotation, SQLite store), prompt-injection
-screening, an SSRF guard and rootless-Podman deployment examples.
+screening, an SSRF guard and rootless-Podman deployment examples. The `v1.0.0`
+tag was created on 2026-10-28 and points at this 2026-06-04 tree.
 
 [2.0.0]: https://github.com/lalbers/renderfetch-mcp/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/lalbers/renderfetch-mcp/releases/tag/v1.0.0

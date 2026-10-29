@@ -102,8 +102,10 @@ Proxy the whole host `https://YOUR_HOST` to `127.0.0.1:10120`, not just `/mcp`: 
 Nginx, Traefik, and Caddy snippets are in [`deploy/`](deploy/). Set `TRUST_PROXY` to the proxy's address as seen inside the container (exact IP or CIDR). If it is empty, forwarded addresses are ignored, so all clients share one rate-limit bucket and anyone can lock out the consent login.
 
 ```bash
-curl https://YOUR_HOST/healthz        # expected: {"status":"ok"}
+curl https://YOUR_HOST/healthz        # {"status":"ok"} means the process is up
 ```
+
+`/healthz` does not check the browser. With the sandbox left on and `deploy/seccomp-chromium.json` missing, it still returns ok and every fetch fails.
 
 ## Connect a client
 
@@ -173,7 +175,7 @@ In the supplied Podman setups, Chromium's renderers run in Chromium's sandbox. T
 
 ## Upgrading from 1.0.0
 
-2.0.0 tightens defaults and needs configuration changes. For example, set `CHROMIUM_NO_SANDBOX=false` (the 1.0.0 example `.env` had `true`) once the container loads `deploy/seccomp-chromium.json`. Read the [upgrade notes](CHANGELOG.md#upgrading-from-100) first.
+2.0.0 tightens defaults and needs configuration changes. Set `CHROMIUM_NO_SANDBOX=false` (the 1.0.0 example `.env` had `true`) only after the container loads `deploy/seccomp-chromium.json`. Otherwise Chromium stays unsandboxed. Read the [upgrade notes](CHANGELOG.md#upgrading-from-100) first.
 
 ## Develop and test
 
