@@ -2,176 +2,199 @@
 
 ## Reporting
 
-Report vulnerabilities privately through this repository's GitHub Security
-Advisories, not public issues. Include a minimal reproduction without real secrets.
+Report vulnerabilities in private. Open a GitHub Security Advisory:
+
+https://github.com/lalbers/renderfetch-mcp/security/advisories/new
+
+Do not file a public issue. Send a minimal reproduction and leave out real
+secrets.
 
 ## Threat model
 
-This is a single-user public-web fetcher, not an authenticated browser or a general
-browser-automation service. Assume every fetched page, script, URL, title, image,
-redirect, and DNS answer is hostile. The server holds OAuth credentials and tokens;
-fetched pages must not acquire their authority.
+This is a single user fetcher for the public web, not an authenticated
+browser or a general browser automation service. Treat every fetched page,
+script, URL, title, image, redirect, and DNS answer as hostile. The server
+holds OAuth credentials and tokens. A fetched page must not acquire them.
 
 ### Network boundary
 
-Each render uses a new browser context and a loopback-only egress proxy. The proxy
-resolves each new upstream connection and rejects the whole DNS answer if any address
-is private, reserved, or special-purpose, including some ranges that are still
-globally reachable. It then connects to a validated **numeric IP**. Chromium does not
-resolve that destination again. HTTP Host and HTTPS end-to-end TLS validation
-retain the original hostname. This covers redirects and subresources even when
-Playwright routing does not see them. Contexts do not share upstream connections.
+Each render uses a new browser context and a loopback only egress proxy. The
+proxy resolves every new upstream name, rejects the whole DNS answer if any
+address is private, reserved, or special purpose (some of those ranges are
+still globally reachable), and connects to one validated IP. The browser's
+dead proxy at `127.0.0.1:9` blocks direct background HTTP. Host and
+certificate checks use the original hostname. Redirects and subresources,
+including requests Playwright routing does not see, take the same path. Do
+not disable TLS verification.
 
-Only HTTP(S), credential-free URLs, and explicitly allowed destination ports are
-accepted. `FETCH_ALLOWED_PORTS` defaults to `80,443`. `FETCH_ALLOW_PRIVATE=true`
-relaxes the address restriction only; it does not disable scheme or port checks.
-Never enable it for an internet-facing deployment.
+Only HTTP and HTTPS URLs are accepted, with no username or password, and
+only on ports in `FETCH_ALLOWED_PORTS` (default `80,443`).
+`FETCH_ALLOW_PRIVATE=true` relaxes the address check only.
 
-Service workers, WebSockets, downloads, and extra pages are blocked or closed. CSP is
-respected. QUIC and non-proxied WebRTC UDP are disabled as defense in depth. The
-HTTP proxy allows only GET, HEAD, and OPTIONS.
+Service workers, WebSockets, downloads, and extra pages are blocked.
+QUIC and non-proxied WebRTC UDP stay off so they cannot skip the proxy.
 
-HTTPS CONNECT is opaque. Method and request-count checks on HTTPS depend on
-Playwright and are **not an absolute read-only network guarantee**. Even GET
-requests can have server-side effects. POST-backed pages may not render completely.
+On plain HTTP the egress proxy allows only GET, HEAD, and OPTIONS. Each TLS
+CONNECT counts toward `FETCH_MAX_REQUESTS`. The proxy cannot see methods or
+requests inside a tunnel. On HTTPS, Playwright rejects write methods in its
+route handler, which does not see every request, and counts requests through
+its request events. Neither is an absolute guarantee. A GET can change state;
+a rejected POST can leave a page incomplete.
 
 ### Output and prompt injection
 
-- Active HTML, event handlers, unsafe links, remote images, comments, and common
-  hidden content are removed before extraction, consistently across output formats.
-- The complete bounded extracted document, title, and source URL are screened
-  **before** the caller's output truncation. Unicode normalization precedes matching.
-- Title and source URL exist only inside the random untrusted-content envelope.
-  Structured metadata outside it contains server-generated fields, not page strings.
-- Blocked results and errors do not echo hostile content or suggest disabling the
-  filter. Enabled detector failures withhold content, including in lenient mode.
-- `FILTER_MODE=lenient` is explicitly weaker: risky text may still be returned.
-  Random markers are a labeling aid, not a model-enforced trust boundary.
-- The optional ML tier is required to initialize when enabled. Limits are at most
-  512 windows of 256 bytes with a 64-byte overlap (about 98 KB of normalized content)
-  and 10 seconds per ML screening call, warmup included. Oversized input, a timeout,
-  or a failed init fails closed rather than skipping that text. The regex layers have
-  no such deadline.
-- Screenshots are opt-in. Text preflight cannot detect all visual instructions or
-  text added after the snapshot. Cookie cleanup does not modify screenshots.
+- The sanitizer removes active HTML, event handlers, unsafe links, remote
+  images, comments, and elements hidden by hidden, inert, or aria-hidden
+  attributes or inline styles (display none, visibility hidden or collapse,
+  zero opacity or font size, large negative left, top, or text-indent
+  values) before extraction, in every format. Content hidden through
+  stylesheets or classes can remain in the extracted text.
+- The whole bounded document, the title, and the source URL are screened
+  before truncation. Unicode is normalized before matching.
+- The title and the source URL appear only inside a random untrusted-content
+  envelope. Structured metadata outside it is server-generated and has no
+  page strings.
+- Blocked results and errors do not echo hostile content. A detector
+  failure withholds the content, including in lenient mode.
+- `FILTER_MODE=lenient` returns high and critical text in the same
+  untrusted envelope. Risk is only in
+  `structuredContent.filter.risk_level`. Strict blocks high and critical
+  risk; medium-risk matches return in both modes. Boundary markers do not
+  bind the model.
+- With `FILTER_TIER2` enabled, startup warmup must finish or the server does
+  not listen. One screening call has a 10-second deadline for any
+  unfinished warmup and then every chunk: about 98 KB of normalized
+  content (512 windows of 256 bytes with a 64-byte overlap). Concurrent
+  ML screening caps at 4; a timed-out call keeps its slot until inference
+  finishes. Oversized input, a timeout, an incomplete result, a failed
+  init, or a further call while 4 are running (rejected, not queued)
+  withholds the text. Regex layers have no deadline.
+- Screenshots are opt-in. Text preflight misses some visual instructions and
+  later text.
 
-**No filter guarantees immunity to prompt injection.** A downstream agent must not
-interpret fetched content as authorization to use unrelated tools, disclose secrets,
-change its policy, or execute code. Keep privileged or write-capable connectors
-behind separate approvals. This server cannot enforce another client's tool
-permissions.
+No filter makes prompt injection impossible. Keep privileged or
+write-capable connectors behind separate approvals. This server cannot
+enforce another client's tool permissions.
 
 ### Cookie cleanup
 
-`cookie_banner=hide` removes recognized cookie overlays from a **detached snapshot**.
-It does not click buttons, reject or accept tracking, change browser cookies, run
-event handlers, or bypass login, paywall, or CAPTCHA controls. Only banners present
-when the snapshot is taken can be detected. Unsupported iframe or shadow content may
-remain. Use `off` when the exact page content matters.
+`cookie_banner=hide` removes recognized cookie overlays from a detached
+snapshot. It does not click, change cookies, or bypass a login, paywall, or
+CAPTCHA.
 
 ### Access control
 
-MCP requires OAuth with the `mcp:fetch` scope, or an explicitly configured static
-bearer. Authorization uses S256 PKCE, audience-, type-, and claim-checked JWTs,
-bounded client registration, and one-time consent stored in SQLite.
+MCP calls need OAuth with the `mcp:fetch` scope, or a configured static
+bearer. Authorization uses S256 PKCE. JWTs are checked for audience, type,
+and claims. Consent is one-time, stored in SQLite, and survives a restart.
 
-Redirect URIs must match `https://claude.ai/api/mcp/auth_callback` or an
-`EXTRA_REDIRECT_URIS` entry exactly, except loopback hosts (`localhost`, `127.0.0.1`,
-`[::1]`), which native clients may use over HTTP or HTTPS on any port, path, or query
-(RFC 8252). URIs with userinfo (a username or password) or a fragment are rejected.
-Unauthenticated registrations that never obtain a token are pruned after
-`OAUTH_UNUSED_CLIENT_TTL`; a client that retries an abandoned flow has to register
-again.
+A redirect URI must match `https://claude.ai/api/mcp/auth_callback` or an
+`EXTRA_REDIRECT_URIS` entry exactly. RFC 8252's any-port rule applies to
+the loopback literals `127.0.0.1` and `[::1]`. This server accepts any
+port on the hostname `localhost`, and any path and query on all three, over
+HTTP or HTTPS. Usernames, passwords, and fragments are rejected.
+
+The hourly job deletes a client only when it never obtained a token and is
+older than `OAUTH_UNUSED_CLIENT_TTL` (default 1 hour). Retrying an
+abandoned flow requires a new registration only after that prune. The job
+does not run at startup, so a registration burst can keep
+`OAUTH_MAX_CLIENTS` full for up to the TTL plus one hour.
 
 On `/mcp`, a present `Origin` must be this server's origin or listed in
-`ALLOWED_ORIGINS`. A missing `Origin` is allowed for non-browser clients. Consent
-does not use that list. The consent POST must come from this server's own origin.
-Consent responses are `no-store` and cannot be framed. The route defaults to
-`Referrer-Policy: no-referrer`. A valid form overrides that with `same-origin`, and
-a consent POST does too once the token is valid and the redirect target is allowed.
-A cross-origin redirect does not receive the consent URL as a referrer. With
-`same-origin`, Chromium still sends the real `Origin` on the consent POST; under
-`no-referrer` it would send `Origin: null`.
+`ALLOWED_ORIGINS`. A missing `Origin` is allowed for non-browser clients.
+Consent ignores that list and requires this server's origin. Consent
+responses are `no-store`, cannot be framed (`X-Frame-Options: DENY`,
+`frame-ancestors`), and default to `Referrer-Policy: no-referrer`.
+A valid form or POST sets `same-origin`, because `no-referrer` makes
+Chromium send `Origin: null`. A cross-origin redirect does not receive the
+consent URL.
 
 Sessions bind to authentication kind, user, and client, not to token bytes.
-Refreshing a token for the same identity works; another client cannot reuse the
-session. Sessions have an idle expiry and a global cap plus a per-identity cap. The
-`/mcp` limiter uses that stable identity, so a refresh does not open a new bucket.
-Consent, `/authorize`, `/token`, `/register`, and `/revoke` are keyed by client IP.
+That identity keeps its session across refresh. Another client cannot reuse
+it. Idle expiry defaults to 15 minutes (`MCP_SESSION_TTL_MS`). Caps default
+to 100 sessions (`MCP_MAX_SESSIONS`) and 10 per identity
+(`MCP_MAX_SESSIONS_PER_CLIENT`). `/mcp` is limited per identity, so an
+empty `TRUST_PROXY` does not affect it.
 
-Refresh tokens rotate atomically with a fixed family expiry. Replaying an old refresh
-token revokes the family, rotation does not extend the original grant, and revocation
-is client-bound. Existing surviving token chains are migrated; replay evidence
-already deleted by older releases cannot be recovered, so reauthorize clients for a
-clean grant history. Access JWTs remain valid until expiry. Rotate `JWT_SECRET` to
-invalidate those access JWTs immediately; the static bearer is unaffected. Refresh
-tokens survive a rotation; to cut off every OAuth client, also delete the database.
-The SQLite file is sensitive: protect its volume and backups, including registered
-client metadata.
+Consent, `/authorize`, `/token`, `/register`, and `/revoke` each have a
+separate counter keyed by client address. Consent allows 10 failed attempts
+per 15 minutes, and only a failed same-origin approve with a valid signed
+request counts. The MCP SDK allows 100 `/authorize`, 50 `/token`, and 50
+`/revoke` per 15 minutes, and 20 `/register` per hour. Set `TRUST_PROXY`
+to the address the container sees. It depends on the Podman network mode.
+Use an exact IP or CIDR, not a hop count or a wide public
+range. If it is empty, every caller shares the peer address and one key
+per limiter. Failed signed logins then share the consent limit, and
+exhausting `/token` stops refresh.
+
+Refresh tokens rotate in one transaction; the family keeps its original
+expiry. Replaying an old refresh token revokes the family, bound to the
+owning client. Access JWTs last `ACCESS_TOKEN_TTL` (default 1 hour).
+Verification does not use the database, so revoking a refresh token does
+not end them. Clients and consent records remain. Deleting the database,
+a separate step, removes registered clients, refresh tokens, and consent
+records. Rotate `JWT_SECRET` and delete the database to cut off every
+OAuth client immediately. Rotation invalidates those JWTs and in-flight
+consent requests signed with it. The static bearer and stored refresh
+tokens survive a `JWT_SECRET` rotation. 1.0.0's prune deleted revoked
+refresh tombstones, so they cannot be rebuilt. Surviving chains are
+migrated, and a stored replay is detected. Protect that volume and its backups.
 
 ## Deployment requirements and remaining risks
 
-1. Terminate TLS at a trusted reverse proxy. Publish the container only on loopback.
-   Inside the container the process binds `0.0.0.0` by default (`BIND_HOST`). Do not
-   publish that socket on a public interface.
+1. Terminate TLS at a reverse proxy you trust, and publish the container
+   only on loopback. The process binds `0.0.0.0` by default (`BIND_HOST`).
 
-   Behind a proxy, set `TRUST_PROXY` to the proxy's address as seen inside the
-   container (exact IP or CIDR). Do not use a hop count or an internet range. Without
-   it, every caller shares the proxy's address. The IP-keyed limits on consent,
-   `/authorize`, `/token`, `/register`, and `/revoke` collapse into one bucket.
+2. Leave Chromium's sandbox on (`CHROMIUM_NO_SANDBOX=false`, the default).
+   With capabilities dropped, the stock seccomp profile blocks the sandbox
+   `chroot`. Compose and `podman run` pass
+   `deploy/seccomp-chromium.json`. Quadlet loads
+   `~/.config/renderfetch-mcp-seccomp.json`
+   (`SeccompProfile=%h/.config/renderfetch-mcp-seccomp.json`): the
+   containers-common default plus one change, from
+   `scripts/seccomp-chromium.mjs`. Podman refuses to start if that file is
+   missing. `chroot` always needs `CAP_SYS_CHROOT`. The sandboxing process
+   holds it inside the user namespace it creates, so allowing the syscall
+   in seccomp is enough. The maintainer checked rootless
+   Podman on 2026-10-28: sandboxed startup needs that profile, and the
+   smoke test passes. With `false` and the stock profile, `/healthz`
+   returns ok and every fetch fails. `true` leaves Chromium unsandboxed.
 
-   Only failed same-origin credential attempts that carry a valid signed request
-   count toward the login limit. Anyone can obtain such a request, so without
-   `TRUST_PROXY` any caller can lock the owner out. The shared proxy address is also
-   one bucket for `/token`, and exhausting that bucket stops connectors from
-   refreshing. List browser MCP clients in `ALLOWED_ORIGINS`. A missing `Origin`
-   header stays allowed for server clients.
+3. Docker is untested. Under Docker the file replaces a stricter default
+   and permits unprivileged user namespaces, the mount API, and
+   `keyctl`. Hosts that forbid unprivileged user namespaces cannot use this
+   sandbox: Ubuntu's
+   `kernel.apparmor_restrict_unprivileged_userns` or a disabled
+   `kernel.unprivileged_userns_clone`.
 
-2. Leave Chromium's sandbox on (the default). With every capability dropped, the
-   stock container seccomp profile denies the `chroot` the sandbox performs inside
-   its own user namespace, so Chromium cannot start sandboxed. The Compose, Quadlet,
-   and `podman run` examples therefore load `deploy/seccomp-chromium.json`: the
-   containers-common default, plus that one change, generated by
-   `scripts/seccomp-chromium.mjs`. The kernel still refuses `chroot` without the
-   capability, so the sandbox works only inside a user namespace the process created.
+4. One container is not strong isolation against a browser compromise.
+   Renderers are sandboxed; the browser, GPU, and utility processes,
+   including the network service, are not. That service parses every HTTP
+   and TLS response and decompresses bodies. Those processes share the
+   server's user and filesystem, so an exploit there, or a renderer exploit
+   plus a sandbox escape, can read OAuth data or the parent environment and
+   connect out. A reduced browser environment limits accidental exposure,
+   not compromise.
 
-   Under Docker the profile replaces Docker's stricter default, so it also permits
-   unprivileged user namespaces, the mount API, and `keyctl`, among others, as
-   Podman's default does. Verified with rootless Podman. Docker is untested. Hosts
-   that forbid unprivileged user namespaces (an AppArmor policy, for example) cannot
-   use the sandbox.
+5. For high assurance, put the browser in its own unprivileged worker with
+   no auth data and no secrets, able to reach only the guarded proxy, and
+   drop private, link-local, and metadata destinations.
 
-   `CHROMIUM_NO_SANDBOX=true` is a last resort. Do not disable TLS verification to
-   make a site load.
+6. Use a read-only root, bounded tmpfs, and CPU, memory, and PID limits.
+   Drop capabilities and set no-new-privileges. Byte and DOM limits do not
+   stop every decompression, script, or synchronous parse bomb.
 
-3. **One container is not strong isolation against a browser compromise.** Renderers
-   are sandboxed. The browser process, the GPU process, and the network service are
-   not. The network service parses every fetched HTTP and TLS response and
-   decompresses bodies. All of them share a user ID and a filesystem with the server.
-   An exploit in one of those processes, or a renderer exploit plus a sandbox escape,
-   can read OAuth data or the parent environment and can try to connect out directly.
-   A minimal child environment reduces accidental exposure, not this compromise risk.
-
-4. For a high-assurance deployment, put the browser in its own unprivileged worker
-   or container. That worker gets no auth data and no secrets. Its network namespace,
-   or a firewall, should allow only the guarded proxy. Drop private, link-local, and
-   metadata destinations at the network layer as well. Chromium flags are not a
-   substitute for that policy.
-
-5. Use a read-only root filesystem; bounded tmpfs; CPU, memory, and PID limits;
-   dropped capabilities; and no-new-privileges. The Compose, Quadlet, and
-   `podman run` examples include these. A wire-byte limit does not stop every
-   decompression bomb or JavaScript memory bomb. DOM limits do not interrupt every
-   synchronous parse. Keep the container limits.
-
-6. Keep the lockfile and the Chromium image current. Advisory audits cover known
-   issues only. `npm audit` does not scan browser binaries or OS packages. Dependabot
-   proposes npm and GitHub Actions updates. Bump the `playwright` package and the
-   Containerfile base image tag together, by hand.
+7. Keep the lockfile and the Chromium image current. `npm audit` does not
+   scan browser binaries or OS packages. Bump `playwright` and the
+   Containerfile base image tag together by hand. Dependabot ignores
+   `playwright` version updates.
 
 ## Verification
 
-Run the full suite with `RUN_E2E=1 npm test` in the matching Playwright environment.
-Network tests assert that blocked targets receive no connections, not merely that
-a fetch reports an error. CI also builds the server and runs
-`npm audit --audit-level=high`. It does not build the container image.
+`RUN_E2E=1 npm test` includes network tests that require blocked targets to
+receive no connection. CI builds the server, runs those tests with
+`CHROMIUM_NO_SANDBOX=true` (`vitest.config.ts`), and runs
+`npm audit --audit-level=high`. It does not build the image. Advisory
+audits cover known issues only. A full `npm audit` at the 2.0.0 release
+reported 0 vulnerabilities. Only `scripts/container-smoke.mjs`, run against
+a locally built image, checks an active sandbox. It also checks a real render.

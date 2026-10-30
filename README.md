@@ -9,19 +9,19 @@ Self-hosted remote [MCP](https://modelcontextprotocol.io) server: headless-brows
 
 ## Why it exists
 
-I noticed that Claude's built-in web fetch often fails on JavaScript-heavy and bot-protected pages. For research and briefings I use Claude to fetch news from a variety of sources.
+I use Claude to fetch news from many sources for research and briefings. Its built-in web fetch often fails on JavaScript-heavy and bot-protected pages, and its full built-in browser is slow and spends too much of the context window. renderfetch-mcp renders the page in a real browser and returns extracted, sanitized page content (Markdown by default).
 
-Using the full built-in browser instead is slow or uses too much of the context window. renderfetch-mcp renders the page in a real browser and returns only the extracted text. claude.ai custom connectors authenticate only via OAuth (they cannot send a static bearer token), so the server brings its own OAuth 2.1 authorization server.
+claude.ai custom connectors authenticate only via OAuth. They cannot send a static bearer token, so this server includes its own OAuth 2.1 authorization server.
 
 ## Features
 
-- **Real headless browser**: based on Chromium (Playwright); runs JavaScript and can wait for specific selectors.
-- **Simple Markdown output**: to conserve more of the context window.
-- **OAuth 2.1**: including dynamic client registration, PKCE, and refresh token rotation.
-- **Defense in depth**: DNS-pinned per-render egress proxy, normalized injection screening, sanitized output, bounded rendering, and client-bound MCP sessions.
-- **Cookie cleanup**: hides recognized consent overlays in the output snapshot (without clicking buttons or giving consent).
-- **Single container**: runs as one rootless Podman container.
-- **Single-user by design**: one login gates everything.
+- Headless Chromium, through Playwright, runs page JavaScript and can wait for a CSS selector.
+- `fetch_url` returns Markdown by default, or text or HTML.
+- OAuth 2.1, with dynamic client registration, PKCE, and refresh-token rotation.
+- Egress checks the DNS answer, output is sanitized and screened, and rendering is bounded.
+- Each MCP session is bound to its auth kind, user, and client.
+- Recognized consent overlays are removed from the output snapshot, without a click.
+- One rootless Podman container, and one login. The server is single-user.
 
 ## How it works
 
@@ -31,17 +31,15 @@ Claude ──OAuth──▶ renderfetch-mcp ──▶ headless Chromium ──�
        page text ◀── injection filter ◀── readability extraction
 ```
 
-The tool is `fetch_url`. `screenshot` is registered only when `SCREENSHOT_ENABLED=true`.
+Each render uses its own loopback egress proxy, which checks the DNS answer and connects to a pinned numeric IP. The HTML is then sanitized, extracted, and screened for prompt injection.
 
 ## Quick start
 
 ### Prerequisites
 
-You need rootless Podman and a public HTTPS hostname.
+Run the commands below as a rootless user. The sandbox needs a user namespace the process creates. You also need a TLS reverse proxy and, for a claude.ai connector, a publicly reachable HTTPS hostname.
 
-This example publishes `127.0.0.1:10120` to port 8080 in the container. The process itself binds `0.0.0.0` unless you change `BIND_HOST`. A reverse proxy terminates TLS.
-
-> Replace `YOUR_HOST` with your hostname.
+### Configure
 
 ```bash
 git clone https://github.com/lalbers/renderfetch-mcp.git
@@ -49,27 +47,24 @@ cd renderfetch-mcp
 cp .env.example .env
 ```
 
-- Edit `.env`.
-  - Set `AUTH_USERNAME` and an `AUTH_PASSWORD` of at least 12 characters.
-  - Set `PUBLIC_BASE_URL`, which must be an HTTPS origin. HTTP is accepted only for `localhost` and `127.0.0.1`.
-  - Set `JWT_SECRET` (required) and, optionally, `STATIC_BEARER_TOKEN` to fresh random values:
+Edit `.env`. Startup rejects the `change-me…` placeholders in `.env.example`, even when the string is long enough. Set `AUTH_USERNAME`, `AUTH_PASSWORD`, and `PUBLIC_BASE_URL`. Generate `JWT_SECRET` and, if you want it, `STATIC_BEARER_TOKEN`:
 
 ```bash
 openssl rand -base64 48   # JWT_SECRET
 openssl rand -base64 32   # STATIC_BEARER_TOKEN
 ```
 
-You can leave `STATIC_BEARER_TOKEN` empty to disable that path. `OAUTH_ONLY=true` disables it even if the variable is set.
+Leave `STATIC_BEARER_TOKEN` empty to disable that path. `OAUTH_ONLY=true` disables it even when the variable is set.
 
-Then start it in one of three ways.
+Each command below publishes `127.0.0.1:10120` to container port 8080. Keep `PORT` at 8080 while that mapping stays. The process binds `0.0.0.0` unless you change `BIND_HOST`.
 
-### Start with Podman Compose (option 1)
+### Podman Compose
 
 ```bash
 podman compose up -d --build        # or, untested: docker compose up -d --build
 ```
 
-### Start with plain Podman (option 2)
+### Plain Podman
 
 ```bash
 ./build.sh
@@ -83,7 +78,7 @@ podman run -d --name renderfetch-mcp --restart unless-stopped \
   -p 127.0.0.1:10120:8080 localhost/renderfetch-mcp:latest
 ```
 
-### Start with systemd and Podman Quadlet (option 3)
+### systemd and Podman Quadlet
 
 ```bash
 ./build.sh
@@ -94,92 +89,89 @@ cp deploy/seccomp-chromium.json ~/.config/renderfetch-mcp-seccomp.json
 systemctl --user daemon-reload && systemctl --user start renderfetch-mcp
 ```
 
-To keep it running after logout and start it at boot, run `loginctl enable-linger` once.
+`daemon-reload` enables the unit because `[Install]` sets `WantedBy=default.target`. Run `loginctl enable-linger` once so the user manager, and this service, keep running after logout and start at boot.
 
-### Set up the TLS reverse proxy
+### TLS reverse proxy
 
-Proxy the whole host `https://YOUR_HOST` to `127.0.0.1:10120`, not just `/mcp`: OAuth also uses `/.well-known/*`, `/authorize`, `/token`, `/register`, `/revoke`, and `/consent`.
-Nginx, Traefik, and Caddy snippets are in [`deploy/`](deploy/). Set `TRUST_PROXY` to the proxy's address as seen inside the container (exact IP or CIDR). If it is empty, forwarded addresses are ignored, so all clients share one rate-limit bucket and anyone can lock out the consent login.
+Replace `YOUR_HOST` with your hostname. Proxy the whole origin `https://YOUR_HOST` to `127.0.0.1:10120`, not only `/mcp`. OAuth also uses `/.well-known/*`, `/authorize`, `/token`, `/register`, `/revoke`, and `/consent`. Snippets for Nginx, Traefik, and Caddy are in [`deploy/`](deploy/).
+
+Set `TRUST_PROXY` to the address the container actually sees. It depends on the Podman network mode: the host's own address on the default rootless network, or an address from the container network when Compose uses a bridge. If it is empty, every caller shares that address on each IP-keyed limiter ([SECURITY.md](SECURITY.md)).
 
 ```bash
 curl https://YOUR_HOST/healthz        # {"status":"ok"} means the process is up
 ```
 
-`/healthz` does not check the browser. With the sandbox left on and `deploy/seccomp-chromium.json` missing, it still returns ok and every fetch fails.
-
 ## Connect a client
 
-In [claude.ai](https://claude.ai): Settings → Connectors → Add custom connector → `https://YOUR_HOST/mcp`. Approve the consent screen with `AUTH_USERNAME` and `AUTH_PASSWORD`.
+In [claude.ai](https://claude.ai), open Settings → Connectors → Add custom connector and enter `https://YOUR_HOST/mcp`. Approve the consent screen with `AUTH_USERNAME` and `AUTH_PASSWORD`.
 
-**Claude Code**
+For Claude Code, register the same endpoint:
 
 ```bash
 claude mcp add --transport http renderfetch https://YOUR_HOST/mcp
 ```
 
-For a script or CI job, send the static bearer instead of using the consent screen:
+For a script or CI job, send the static bearer:
 
 ```bash
 claude mcp add --transport http renderfetch https://YOUR_HOST/mcp \
   --header "Authorization: Bearer $STATIC_BEARER_TOKEN"
 ```
 
-Example: *"Fetch https://example.com and summarize it."*
-
 ## The `fetch_url` tool
 
-| param | meaning |
+| Parameter | Meaning |
 |---|---|
 | `url` | the page to fetch (http/https) |
 | `format` | `markdown` (default), `text`, or `html` |
-| `wait_ms` | extra wait after load, for slow JavaScript |
+| `wait_ms` | extra wait after load, capped at 60000 ms by the tool schema, inside `FETCH_TIMEOUT_MS` |
 | `wait_for_selector` | wait until this CSS selector appears |
 | `css_selector` | extract just this part of the page |
-| `max_chars` | cap page content after screening the full bounded extraction |
+| `max_chars` | caps page text after the whole bounded extraction was screened; trust warning, source URL, title (cut to 1000 characters), and boundary fence are added on top. Default 50000 |
 | `cookie_banner` | `hide` (default): remove recognized cookie overlays from the output snapshot; `off`: retain them |
 
 ### What comes back
 
-The page text is returned twice: a text block in `content`, and the same text as `structuredContent.text`, next to server metadata (`http_status`, `truncated`, `format`, `filter`, `provenance`, `cookie_banner`). Title and source URL stay inside the untrusted text, not in those fields.
+Page text is returned in `content` and again as `structuredContent.text`. Some clients, including the claude.ai connector, show only `structuredContent`. Others read `content`. Metadata beside that text is `http_status`, `truncated`, `format`, `filter`, `provenance`, and `cookie_banner`. The title and the source URL stay inside the untrusted text.
 
-Some MCP clients render only `structuredContent` once that field is present. The claude.ai connector started doing so in early September 2026. A result that put only metadata there reached the model with no page text, while the server log showed a successful fetch. Clients that ignore `structuredContent` still read `content`, so both are sent.
+Errors are fixed strings, with no raw browser errors, URLs, or titles. HTML is sanitized, not a raw dump: an `img` becomes its alt text, and safe relative links are made absolute.
 
-Errors are fixed strings. They do not include raw browser errors, URLs, or titles. HTML is sanitized, not a raw page dump. An `img` is reduced to its alt text, and safe relative links are made absolute. Cookie cleanup is cosmetic only. It does not accept or reject consent, bypass access controls, or modify the live page.
+### `screenshot`
 
-`screenshot` stays off unless `SCREENSHOT_ENABLED=true`. The image is a viewport PNG, not a full-page capture. It is expensive in tokens, text screening does not catch every visual instruction, and cookie cleanup does not change the picture.
+The tool stays off unless `SCREENSHOT_ENABLED=true`. The image is a viewport PNG, not a full-page capture, and it is expensive in tokens.
 
 ## Configuration
 
-All settings are environment variables, documented in [`.env.example`](.env.example). The most important ones:
+All settings are environment variables, documented in [`.env.example`](.env.example).
 
-| variable | what it does |
+| Variable | What it does |
 |---|---|
 | `PUBLIC_BASE_URL` | HTTPS origin, no path, query, credentials, or fragment, e.g. `https://mcp.example.com`. HTTP only for `localhost` and `127.0.0.1` (not `[::1]`) |
 | `AUTH_USERNAME` / `AUTH_PASSWORD` | the consent-screen login. Password at least 12 characters |
 | `JWT_SECRET` | signs access and consent tokens. At least 32 characters |
 | `STATIC_BEARER_TOKEN` | optional bearer for headless clients. 32+ printable ASCII characters, no whitespace. Empty disables it. claude.ai does not use it |
 | `OAUTH_ONLY` | `true` disables the static bearer |
-| `FILTER_MODE` | `strict` blocks high and critical risk. `lenient` can return that text, labeled. A detector failure withholds content in both modes |
-| `FETCH_ALLOWED_PORTS` | destination ports, default `80,443`. `FETCH_ALLOW_PRIVATE=true` does not open other ports or schemes. Leave private access off on a public server |
-| `ALLOWED_ORIGINS` | extra exact browser origins (MCP Inspector, for example). This server's origin is always allowed. A missing `Origin` header is allowed for non-browser clients |
-| `TRUST_PROXY` | exact trusted proxy IPs or CIDRs, as seen inside the container. Set it behind a reverse proxy. Empty: ignore forwarded client addresses |
-| `CHROMIUM_NO_SANDBOX` | default `false`. The container examples keep the sandbox via [`deploy/seccomp-chromium.json`](deploy/seccomp-chromium.json). `true` is a last resort |
+| `FILTER_MODE` | `strict` blocks high and critical risk. `lenient` returns that text in the same untrusted envelope; risk level is only in `structuredContent.filter.risk_level`. Medium-risk matches return in both modes. A detector failure withholds content in both modes |
+| `FILTER_TIER2` | optional ML classifier, off by default. If initialization fails, the server does not start |
+| `FETCH_ALLOWED_PORTS` | destination ports, default `80,443` |
+| `FETCH_ALLOW_PRIVATE` | relaxes the address check only. Schemes, URL credentials, and ports still apply. Leave it off on a public server |
+| `ALLOWED_ORIGINS` | extra exact browser origins (MCP Inspector, for example). This origin is always allowed. A missing `Origin` is allowed for non-browser clients |
+| `TRUST_PROXY` | proxy IP or CIDR the container sees. Empty ignores forwarded addresses |
+| `CHROMIUM_NO_SANDBOX` | default `false`. `true` leaves Chromium unsandboxed. See [SECURITY.md](SECURITY.md) |
 
-Registered clients and tokens sit in a SQLite file on the `renderfetch-data` volume (`renderfetch-mcp_renderfetch-data` under Compose; see `podman volume ls`). Remove the container, then `podman volume rm <volume>` deletes that file. It is recreated on the next start, and clients register again.
+Clients and tokens are in SQLite on the `renderfetch-data` volume (`renderfetch-mcp_renderfetch-data` under Compose; `podman volume ls`). Remove the container, then `podman volume rm <volume>` deletes the file. The next start creates a new one, and clients register again.
 
 ## Security
 
-Treat every fetched page as hostile. The per-render proxy checks each destination and connects to a pinned numeric IP. Page text is sanitized, screened, and labeled before it is returned. Regex filters, the optional ML tier, and random boundary markers do not make prompt injection impossible.
-
-In the supplied Podman setups, Chromium's renderers run in Chromium's sandbox. The browser process, the GPU process, and the network service do not. They share the container and the user ID with the OAuth store. A separate browser worker, with no auth data, plus egress control outside the process, is the stronger boundary. Docker is untested. Deployment rules: [SECURITY.md](SECURITY.md).
+Treat every fetched page as hostile. Filtering does not make prompt injection impossible. The browser, GPU, and utility processes, such as the network service, run outside the sandbox and share the OAuth store's user. See [SECURITY.md](SECURITY.md).
 
 ## Upgrading from 1.0.0
 
-2.0.0 tightens defaults and needs configuration changes. First make the container load `deploy/seccomp-chromium.json`, then set `CHROMIUM_NO_SANDBOX=false` (now also the default). The 1.0.0 example `.env` set it to `true`, which keeps Chromium unsandboxed. With `false` but without the profile, Chromium cannot start and every fetch fails. Read the [upgrade notes](CHANGELOG.md#upgrading-from-100) before upgrading.
+Add `deploy/seccomp-chromium.json` and set `CHROMIUM_NO_SANDBOX=false` before you replace the container. 1.0.0's code default, used when unset, and example `.env` were `true`. [SECURITY.md](SECURITY.md) explains the profile. Other steps: [upgrade notes](CHANGELOG.md#upgrading-from-100).
 
 ## Develop and test
 
-No host install required. The suite can run in a throwaway container:
+The suite can run in a throwaway container:
 
 ```bash
 tar -cf - src test package.json package-lock.json tsconfig.json vitest.config.ts | \
@@ -189,9 +181,7 @@ tar -cf - src test package.json package-lock.json tsconfig.json vitest.config.ts
     npm ci && npm run build && RUN_E2E=1 npm test'
 ```
 
-Locally with Node 22.22.2+, 24.15+, or 26+: `npm ci && npm run build && npm test`. `RUN_E2E=1` adds the real-browser security tests (after `npx playwright install --with-deps chromium`); CI runs them too.
-
-After building the image, `scripts/container-smoke.mjs` runs a real render, extraction, and filter check inside it and verifies that Chromium's sandbox is active. Its header shows the `podman run` command.
+Locally, use Node 22 (22.22.2 or later), Node 24 (24.15 or later), or Node 26 and later. Node 23 and 25 are not supported. Run `npm ci && npm run build && npm test`. `RUN_E2E=1` adds the real-browser tests after `npx playwright install --with-deps chromium`. Build the image with `./build.sh` first. The header comment of `scripts/container-smoke.mjs` gives the `podman run` command for the built image.
 
 ## Tech
 
@@ -199,4 +189,4 @@ TypeScript · [`@modelcontextprotocol/sdk`](https://github.com/modelcontextproto
 
 ## License
 
-[MIT](LICENSE).
+[MIT](LICENSE). `deploy/seccomp-chromium.json` is Apache-2.0 derived (see [NOTICE](NOTICE)).
