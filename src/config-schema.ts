@@ -77,6 +77,11 @@ export const ConfigSchema = z.object({
   BROWSER_RECYCLE_AFTER: intEnv(200, 0, 10000),
   // Enable Chromium's sandbox unless a container operator explicitly disables it.
   CHROMIUM_NO_SANDBOX: boolEnv(false),
+  // Browser binary to launch instead of Playwright's bundled Chromium. The image
+  // sets it to a pinned Chrome for Testing build when the bundled one lags
+  // behind Chrome security fixes. Empty uses the bundled build.
+  CHROMIUM_EXECUTABLE_PATH: z.string().max(4096)
+    .refine((v) => v === '' || v.startsWith('/'), 'Use an absolute path').default(''),
   FETCH_TIMEOUT_MS: intEnv(90000, 1000, 180000),
   FETCH_MAX_REQUESTS: intEnv(300, 1, 2000),
   FETCH_MAX_HTML_BYTES: intEnv(2000000, 1000, 10000000),

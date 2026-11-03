@@ -10,7 +10,13 @@ describe('configuration security', () => {
     expect(result.FETCH_ALLOWED_PORTS).toEqual([80, 443]);
     expect(result.TRUST_PROXY).toEqual([]);
     expect(result.CHROMIUM_NO_SANDBOX).toBe(false);
+    expect(result.CHROMIUM_EXECUTABLE_PATH).toBe('');
     expect(result.CLIENT_SECRET_TTL).toBe(31536000);
+  });
+  it('accepts only an absolute browser executable path', () => {
+    expect(ConfigSchema.parse({ ...base, CHROMIUM_EXECUTABLE_PATH: '/opt/chrome/chrome-headless-shell' })
+      .CHROMIUM_EXECUTABLE_PATH).toBe('/opt/chrome/chrome-headless-shell');
+    expect(ConfigSchema.safeParse({ ...base, CHROMIUM_EXECUTABLE_PATH: 'chrome-headless-shell' }).success).toBe(false);
   });
   it.each(['tru', 'enabled', 'nope'])('rejects typoed security boolean %s', (v) => {
     expect(ConfigSchema.safeParse({ ...base, OAUTH_ONLY: v }).success).toBe(false);

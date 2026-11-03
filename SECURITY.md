@@ -187,13 +187,21 @@ migrated, and a stored replay is detected. Protect that volume and its backups.
 7. Keep the lockfile and the Chromium image current. `npm audit` does not
    scan browser binaries or OS packages. Bump `playwright` and the
    Containerfile base image tag together by hand. Dependabot ignores
-   `playwright` version updates.
+   `playwright` version updates. When the bundled Chromium misses a Chrome
+   security release, the Containerfile pins the Chrome for Testing headless
+   shell of the same milestone (`CHROME_VERSION`, `CHROME_SHA256`), points
+   `CHROMIUM_EXECUTABLE_PATH` at it, and deletes the bundled build. Since
+   2026-11-03 it pins 156.0.8078.80 for CVE-2026-118306 and three other
+   CVEs fixed in Chrome 156.0.8078.73. CI fails once the bundled build
+   catches up. Outside the image, set `CHROMIUM_EXECUTABLE_PATH` yourself or
+   the bundled build runs.
 
 ## Verification
 
 `RUN_E2E=1 npm test` includes network tests that require blocked targets to
-receive no connection. CI builds the server, runs those tests with
-`CHROMIUM_NO_SANDBOX=true` (`vitest.config.ts`), and runs
+receive no connection. CI builds the server, runs those tests against the
+pinned Chrome for Testing build with `CHROMIUM_NO_SANDBOX=true`
+(`vitest.config.ts`), and runs
 `npm audit --audit-level=high`. It does not build the image. Advisory
 audits cover known issues only. A full `npm audit` at the 2.0.0 release
 reported 0 vulnerabilities. Only `scripts/container-smoke.mjs`, run against
