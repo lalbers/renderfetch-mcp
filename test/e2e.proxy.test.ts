@@ -2,6 +2,7 @@ import { createServer, type Server } from 'node:http';
 import type { Socket } from 'node:net';
 import { chromium, type Browser, type BrowserContext } from 'playwright';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { config } from '../src/config.js';
 import { startEgressProxy, type EgressProxy } from '../src/fetch/proxy.js';
 
 // Opt-in real Chromium regression tests. Every response is either fulfilled by
@@ -40,6 +41,8 @@ describe.skipIf(!RUN)('e2e: connection-level Chromium SSRF boundary', () => {
     port = address.port;
     browser = await chromium.launch({
       headless: true,
+      // CI tests the same pinned browser build the image ships.
+      ...(config.CHROMIUM_EXECUTABLE_PATH ? { executablePath: config.CHROMIUM_EXECUTABLE_PATH } : {}),
       // Tests run in the existing isolated container; this is not a production default.
       chromiumSandbox: false,
       // Prevent browser-global background traffic from escaping to the network.

@@ -158,6 +158,7 @@ All settings are environment variables, documented in [`.env.example`](.env.exam
 | `ALLOWED_ORIGINS` | extra exact browser origins (MCP Inspector, for example). This origin is always allowed. A missing `Origin` is allowed for non-browser clients |
 | `TRUST_PROXY` | proxy IP or CIDR the container sees. Empty ignores forwarded addresses |
 | `CHROMIUM_NO_SANDBOX` | default `false`. `true` leaves Chromium unsandboxed. See [SECURITY.md](SECURITY.md) |
+| `CHROMIUM_EXECUTABLE_PATH` | absolute path of the browser binary. Outside the image, empty uses Playwright's bundled Chromium. The image sets it to a pinned Chrome for Testing build and deletes the bundled one, so leave it unset there. See [SECURITY.md](SECURITY.md) |
 
 Clients and tokens are in SQLite on the `renderfetch-data` volume (`renderfetch-mcp_renderfetch-data` under Compose; `podman volume ls`). Remove the container, then `podman volume rm <volume>` deletes the file. The next start creates a new one, and clients register again.
 
@@ -181,7 +182,7 @@ tar -cf - src test package.json package-lock.json tsconfig.json vitest.config.ts
     npm ci && npm run build && RUN_E2E=1 npm test'
 ```
 
-Locally, use Node 22 (22.22.2 or later), Node 24 (24.15 or later), or Node 26 and later. Node 23 and 25 are not supported. Run `npm ci && npm run build && npm test`. `RUN_E2E=1` adds the real-browser tests after `npx playwright install --with-deps chromium`. Build the image with `./build.sh` first. The header comment of `scripts/container-smoke.mjs` gives the `podman run` command for the built image.
+Locally, use Node 22 (22.22.2 or later), Node 24 (24.15 or later), or Node 26 and later. Node 23 and 25 are not supported. Run `npm ci && npm run build && npm test`. `RUN_E2E=1` adds the real-browser tests after `npx playwright install --with-deps chromium`. CI points `CHROMIUM_EXECUTABLE_PATH` at the build pinned in the `Containerfile` instead. Build the image with `./build.sh` first. The header comment of `scripts/container-smoke.mjs` gives the `podman run` command for the built image.
 
 ## Tech
 

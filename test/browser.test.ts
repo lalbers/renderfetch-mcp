@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => {
     route: vi.fn(async () => {}), routeWebSocket: vi.fn(async () => {}),
     on: vi.fn(), newPage: vi.fn(async () => page), close: vi.fn(async () => {}),
   };
-  const browser = { isConnected: () => true, newContext: vi.fn(async () => context), on: vi.fn(), close: vi.fn(async () => {}) };
+  const browser = { isConnected: () => true, version: () => '156.0.8078.80', newContext: vi.fn(async () => context), on: vi.fn(), close: vi.fn(async () => {}) };
   const proxy = { url: 'http://127.0.0.1:12345', failure: undefined, close: vi.fn(async () => {}) };
   return { page, context, browser, proxy, launch: vi.fn(async () => browser), startProxy: vi.fn(async () => proxy) };
 });
@@ -22,12 +22,14 @@ vi.mock('playwright', () => ({ chromium: { launch: mocks.launch } }));
 vi.mock('../src/fetch/proxy.js', () => ({ startEgressProxy: mocks.startProxy }));
 
 import { browserEnvironment, closeBrowser, renderPage, screenshotPage } from '../src/fetch/browser.js';
-const originals = { maxQueue: config.BROWSER_MAX_QUEUE, timeout: config.FETCH_TIMEOUT_MS, maxHtml: config.FETCH_MAX_HTML_BYTES };
+const originals = { maxQueue: config.BROWSER_MAX_QUEUE, timeout: config.FETCH_TIMEOUT_MS, maxHtml: config.FETCH_MAX_HTML_BYTES,
+  executablePath: config.CHROMIUM_EXECUTABLE_PATH };
 
 afterEach(async () => {
   config.BROWSER_MAX_QUEUE = originals.maxQueue;
   config.FETCH_TIMEOUT_MS = originals.timeout;
   config.FETCH_MAX_HTML_BYTES = originals.maxHtml;
+  config.CHROMIUM_EXECUTABLE_PATH = originals.executablePath;
   await closeBrowser();
   vi.clearAllMocks();
 });
@@ -36,6 +38,17 @@ describe('isolated browser jobs', () => {
   it('passes only an explicit environment allowlist to Chromium', () => {
     expect(browserEnvironment({ PATH: '/bin', HOME: '/home/browser', JWT_SECRET: 'secret', AUTH_PASSWORD: 'secret', AWS_SESSION_TOKEN: 'secret', NODE_OPTIONS: '--require evil.js', HTTP_PROXY: 'http://evil' }))
       .toEqual({ PATH: '/bin', HOME: '/home/browser' });
+  });
+
+  it('launches the configured browser binary, or the bundled build when none is set', async () => {
+    config.CHROMIUM_EXECUTABLE_PATH = '/opt/chrome-for-testing/chrome-headless-shell';
+    await renderPage({ url: 'https://example.com/' });
+    expect(mocks.launch).toHaveBeenLastCalledWith(expect.objectContaining({
+      executablePath: '/opt/chrome-for-testing/chrome-headless-shell' }));
+    await closeBrowser();
+    config.CHROMIUM_EXECUTABLE_PATH = '';
+    await renderPage({ url: 'https://example.com/' });
+    expect(mocks.launch.mock.lastCall?.[0]).not.toHaveProperty('executablePath');
   });
 
   it('enforces per-context proxy, service-worker and download restrictions', async () => {

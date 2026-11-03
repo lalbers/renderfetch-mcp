@@ -37,6 +37,8 @@ describe.skipIf(!RUN)('e2e: consent browser security', () => {
     callback = `http://127.0.0.1:${address.port}/callback`;
     browser = await chromium.launch({
       headless: true,
+      // CI tests the same pinned browser build the image ships.
+      ...(config.CHROMIUM_EXECUTABLE_PATH ? { executablePath: config.CHROMIUM_EXECUTABLE_PATH } : {}),
       chromiumSandbox: false, // isolated test container, not a production default
       // Allow only our loopback fixtures. Any background/external traffic fails.
       proxy: { server: 'http://127.0.0.1:9', bypass: '127.0.0.1' },

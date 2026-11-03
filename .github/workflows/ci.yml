@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      # Install the matching Chromium explicitly after dependency auditing.
+      # Tests use the pinned Chrome for Testing build, not Playwright's download.
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -30,9 +30,29 @@ jobs:
           test "$(grep -c "^FROM mcr.microsoft.com/playwright:v$v-noble " Containerfile)" -eq 2 \
             || { echo "::error file=Containerfile::base image must be playwright:v$v-noble (both stages)"; exit 1; }
       - run: npm ci
+      - name: Chrome for Testing pin is still ahead of Playwright's Chromium
+        run: |
+          pinned=$(sed -n 's/^ARG CHROME_VERSION=//p' Containerfile)
+          bundled=$(node -p "JSON.parse(require('fs').readFileSync('node_modules/playwright-core/browsers.json', 'utf8')).browsers.find((b) => b.name === 'chromium-headless-shell').browserVersion")
+          [ -n "$pinned" ] && [ -n "$bundled" ] \
+            || { echo "::error file=Containerfile::cannot read CHROME_VERSION or the bundled Chromium version"; exit 1; }
+          if [ "$(printf '%s\n%s\n' "$pinned" "$bundled" | sort -V | tail -n1)" = "$bundled" ]; then
+            echo "::error file=Containerfile::Playwright bundles Chromium $bundled, pin is $pinned. Remove the Chrome for Testing override."
+            exit 1
+          fi
       - run: npm run build
       - run: npm audit --audit-level=high
-      - run: npx playwright install --with-deps chromium
+      # The real-browser tests run the pinned build the image ships.
+      - name: Fetch the pinned Chrome for Testing build
+        run: |
+          v=$(sed -n 's/^ARG CHROME_VERSION=//p' Containerfile)
+          sum=$(sed -n 's/^ARG CHROME_SHA256=//p' Containerfile)
+          curl -fsSL -o "$RUNNER_TEMP/chs.zip" \
+            "https://storage.googleapis.com/chrome-for-testing-public/$v/linux64/chrome-headless-shell-linux64.zip"
+          echo "$sum  $RUNNER_TEMP/chs.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/chs.zip" -d "$RUNNER_TEMP/cft"
+          echo "CHROMIUM_EXECUTABLE_PATH=$RUNNER_TEMP/cft/chrome-headless-shell-linux64/chrome-headless-shell" >> "$GITHUB_ENV"
+      - run: npx playwright install-deps chromium
       - run: npm test
         env:
           RUN_E2E: "1"

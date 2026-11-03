@@ -26,6 +26,7 @@ async function getBrowser(): Promise<Browser> {
   if (launching) return launching;
   launching = chromium.launch({
     headless: true,
+    ...(config.CHROMIUM_EXECUTABLE_PATH ? { executablePath: config.CHROMIUM_EXECUTABLE_PATH } : {}),
     chromiumSandbox: !config.CHROMIUM_NO_SANDBOX,
     env: browserEnvironment(),
     // A dead launch-level proxy prevents browser background HTTP traffic going
@@ -41,7 +42,7 @@ async function getBrowser(): Promise<Browser> {
     browser = b;
     requestsSinceLaunch = 0;
     b.on('disconnected', () => { if (browser === b) browser = null; });
-    logger.info('chromium launched');
+    logger.info({ version: b.version() }, 'chromium launched');
     return b;
   }).finally(() => { launching = null; });
   return launching;

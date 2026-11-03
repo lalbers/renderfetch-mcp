@@ -8,7 +8,23 @@ All notable changes to this project are listed here. The format follows
 
 ### Security
 
+- The container image runs the Chrome for Testing headless shell
+  156.0.8078.80 instead of the Chromium 156.0.8078.4 bundled with Playwright
+  1.64.1. The bundled build lacks the fixes for CVE-2026-118306 (critical,
+  code execution outside the sandbox), CVE-2026-118331, CVE-2026-118344, and
+  CVE-2026-118348. The build is pinned by version and SHA-256, and the
+  bundled Chromium is deleted from the image filesystem. Rebuild the image to
+  pick it up.
+- CI runs the real-browser tests against the same build and fails once
+  Playwright bundles a Chromium at least as new as the pin.
 - CI checks out the repository with `persist-credentials: false`.
+
+### Added
+
+- `CHROMIUM_EXECUTABLE_PATH` selects the browser binary. Outside the image,
+  empty keeps Playwright's bundled Chromium; the image sets it, so leave it
+  unset there.
+- The `chromium launched` log line includes the browser version.
 
 ### Changed
 
