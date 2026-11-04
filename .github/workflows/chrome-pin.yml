@@ -1,0 +1,33 @@
+name: Chrome pin
+
+# The image runs a pinned Chrome for Testing build (Containerfile
+# CHROME_VERSION) because Playwright's bundled Chromium lags behind Chrome
+# security releases. This fails when Chrome stable has moved past the pin.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pin-is-current:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Pinned build is the current Chrome stable
+        run: |
+          pinned=$(sed -n 's/^ARG CHROME_VERSION=//p' Containerfile)
+          stable=$(curl -fsSL https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json \
+            | jq -r '.channels.Stable.version')
+          [ -n "$pinned" ] && [ -n "$stable" ] && [ "$stable" != null ] \
+            || { echo "::error::cannot read the pinned or the stable Chrome version"; exit 1; }
+          if [ "$stable" != "$pinned" ] && [ "$(printf '%s\n%s\n' "$pinned" "$stable" | sort -V | tail -n1)" = "$stable" ]; then
+            echo "::error file=Containerfile::Chrome stable is $stable, the image pins $pinned. Bump CHROME_VERSION and CHROME_SHA256."
+            exit 1
+          fi
+          echo "Pin $pinned is current (Chrome stable $stable)."
