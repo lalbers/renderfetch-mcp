@@ -37,7 +37,7 @@ jobs:
           [ -n "$pinned" ] && [ -n "$bundled" ] \
             || { echo "::error file=Containerfile::cannot read CHROME_VERSION or the bundled Chromium version"; exit 1; }
           if [ "$(printf '%s\n%s\n' "$pinned" "$bundled" | sort -V | tail -n1)" = "$bundled" ]; then
-            echo "::error file=Containerfile::Playwright bundles Chromium $bundled, pin is $pinned. Remove the Chrome for Testing override."
+            echo "::error file=Containerfile::Playwright bundles Chromium $bundled, pin is $pinned. If Chrome stable is newer than $bundled, bump CHROME_VERSION and CHROME_SHA256; otherwise remove the Chrome for Testing override (see the Containerfile comment)."
             exit 1
           fi
       - run: npm run build

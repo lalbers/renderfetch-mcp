@@ -11,15 +11,21 @@ ENV NODE_ENV=development
 RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 make g++ ca-certificates curl unzip \
  && rm -rf /var/lib/apt/lists/*
-# Playwright 1.64.1 bundles Chromium 156.0.8078.4, which lacks the fixes for
-# CVE-2026-118306, -118331, -118344 and -118348 (Chrome 156.0.8078.73). Until a
-# Playwright release bundles a fixed build, the image runs the Chrome for
-# Testing headless shell of the same milestone, pinned by version and SHA-256.
-# CI fails once the bundled build catches up; then drop this block, the
-# override in the runtime stage, and the two Chrome for Testing steps in
-# .github/workflows/ci.yml.
-ARG CHROME_VERSION=156.0.8078.80
-ARG CHROME_SHA256=547dcd374e02961bf998f6046a267644f8502225c36bb78ca307dab32a0b3eb4
+# Playwright 1.64.1 bundles Chromium 156.0.8078.4. It lacks the security fixes
+# Chrome shipped since then: CVE-2026-118306 and three others in 156.0.8078.73,
+# and those in 157.0.8103.38 (2026-11-03); Chrome for Testing publishes no 156
+# build with the latter (latest 156.0.8078.80). Until a Playwright release
+# bundles a current build, the image runs the stable Chrome for Testing
+# headless shell, pinned by version and SHA-256.
+# .github/workflows/chrome-pin.yml fails when Chrome stable moves past the pin;
+# bump both ARGs then. CI fails when the bundled build is at least the pinned
+# version. If Chrome stable is no newer than the bundled build at that point,
+# remove the override: this block and `curl unzip` above, the ENV and the
+# rm/ls check in the runtime stage, chrome-pin.yml, and in ci.yml the two
+# Chrome for Testing steps and PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD (go back to
+# `npx playwright install --with-deps chromium`).
+ARG CHROME_VERSION=157.0.8103.38
+ARG CHROME_SHA256=deafffa74660b34853a4119c361fd427ac8c9fcb62db51ddb8a797cd83a4ba2d
 RUN curl -fsSL -o /tmp/chrome-headless-shell.zip \
       "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-headless-shell-linux64.zip" \
  && echo "${CHROME_SHA256}  /tmp/chrome-headless-shell.zip" | sha256sum -c - \

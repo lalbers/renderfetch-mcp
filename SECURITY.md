@@ -188,13 +188,13 @@ migrated, and a stored replay is detected. Protect that volume and its backups.
    scan browser binaries or OS packages. Bump `playwright` and the
    Containerfile base image tag together by hand. Dependabot ignores
    `playwright` version updates. When the bundled Chromium misses a Chrome
-   security release, the Containerfile pins the Chrome for Testing headless
-   shell of the same milestone (`CHROME_VERSION`, `CHROME_SHA256`), points
-   `CHROMIUM_EXECUTABLE_PATH` at it, and deletes the bundled build. Since
-   2026-11-03 it pins 156.0.8078.80 for CVE-2026-118306 and three other
-   CVEs fixed in Chrome 156.0.8078.73. CI fails once the bundled build
-   catches up. Outside the image, set `CHROMIUM_EXECUTABLE_PATH` yourself or
-   the bundled build runs.
+   security release, the Containerfile pins the stable Chrome for Testing
+   headless shell (`CHROME_VERSION`, `CHROME_SHA256`), points
+   `CHROMIUM_EXECUTABLE_PATH` at it, and deletes the bundled build. The
+   scheduled `chrome-pin` workflow fails when Chrome stable moves past the
+   pin; bump it then. CI fails when the bundled build is at least the
+   pinned version. Outside the image, set `CHROMIUM_EXECUTABLE_PATH`
+   yourself or the bundled build runs.
 
 ## Verification
 
