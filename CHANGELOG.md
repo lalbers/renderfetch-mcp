@@ -9,7 +9,7 @@ All notable changes to this project are listed here. The format follows
 ### Security
 
 - The container image runs the Chrome for Testing headless shell
-  157.0.8103.38 instead of the Chromium 156.0.8078.4 bundled with Playwright
+  157.0.8103.50 instead of the Chromium 156.0.8078.4 bundled with Playwright
   1.64.1. The bundled build lacks the fixes for CVE-2026-118306 (critical,
   code execution outside the sandbox), CVE-2026-118331, CVE-2026-118344, and
   CVE-2026-118348 from Chrome 156.0.8078.73, and the security fixes in Chrome

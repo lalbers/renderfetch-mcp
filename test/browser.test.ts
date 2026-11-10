@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => {
     route: vi.fn(async () => {}), routeWebSocket: vi.fn(async () => {}),
     on: vi.fn(), newPage: vi.fn(async () => page), close: vi.fn(async () => {}),
   };
-  const browser = { isConnected: () => true, version: () => '157.0.8103.38', newContext: vi.fn(async () => context), on: vi.fn(), close: vi.fn(async () => {}) };
+  const browser = { isConnected: () => true, version: () => '157.0.8103.50', newContext: vi.fn(async () => context), on: vi.fn(), close: vi.fn(async () => {}) };
   const proxy = { url: 'http://127.0.0.1:12345', failure: undefined, close: vi.fn(async () => {}) };
   return { page, context, browser, proxy, launch: vi.fn(async () => browser), startProxy: vi.fn(async () => proxy) };
 });
