@@ -176,7 +176,7 @@ The suite can run in a throwaway container:
 
 ```bash
 tar -cf - src test package.json package-lock.json tsconfig.json vitest.config.ts | \
-  podman run --rm -i --shm-size=1g --init mcr.microsoft.com/playwright:v1.64.1-noble sh -c '
+  podman run --rm -i --shm-size=1g --init mcr.microsoft.com/playwright:v1.65.0-noble sh -c '
     apt-get update -q && apt-get install -yq --no-install-recommends python3 make g++ >/dev/null &&
     mkdir -p /app && cd /app && tar -xf - &&
     npm ci && npm run build && RUN_E2E=1 npm test'

@@ -9,17 +9,23 @@ All notable changes to this project are listed here. The format follows
 ### Security
 
 - The container image runs the Chrome for Testing headless shell
-  157.0.8103.50 instead of the Chromium 156.0.8078.4 bundled with Playwright
-  1.64.1. The bundled build lacks the fixes for CVE-2026-118306 (critical,
-  code execution outside the sandbox), CVE-2026-118331, CVE-2026-118344, and
-  CVE-2026-118348 from Chrome 156.0.8078.73, and the security fixes in Chrome
-  157.0.8103.38 (213 NVD entries, among them CVE-2026-121035, critical, code
-  execution outside the sandbox). The build is pinned by version and SHA-256,
-  and the bundled Chromium is deleted from the image filesystem. Rebuild the
-  image to pick it up.
-- CI runs the real-browser tests against the same build and fails once
-  Playwright bundles a Chromium at least as new as the pin. A daily
-  `chrome-pin` workflow fails when Chrome stable moves past the pin.
+  158.0.8127.36 instead of Playwright's bundled Chromium, which trails Chrome
+  security releases. Playwright 1.64.1 bundled 156.0.8078.4, without the fixes
+  for CVE-2026-118306 (critical, code execution outside the sandbox),
+  CVE-2026-118331, CVE-2026-118344, and CVE-2026-118348 from Chrome
+  156.0.8078.73. Chrome 157 and 158 fixed further security bugs (NVD: 213 and
+  203 entries), including critical ones such as CVE-2026-121035, code
+  execution outside the sandbox. Playwright 1.65.0 bundles 158.0.8127.18,
+  while NVD names 158.0.8127.36 as the first fixed version for the Chrome 158
+  fixes. The build is pinned by version and SHA-256, and the bundled Chromium
+  is deleted from the image filesystem. Rebuild the image to pick it up.
+- CI runs the real-browser tests against the pinned Chrome for Testing build
+  and fails once Playwright bundles a Chromium at least as new as the pin. A
+  daily `chrome-pin` workflow fails when Chrome stable moves past the pin.
+- hono 4.13.18 and @hono/node-server 2.1.8, both pulled in by the MCP SDK,
+  fix GHSA-46wx-v44x-9hh2, GHSA-4m76-xfj5-7975, GHSA-3gg2-335m-rxc6,
+  GHSA-4h7h-rv7c-7m2v, GHSA-h7mg-cq63-vhpq, GHSA-qv5m-9pm6-hqp3, and
+  GHSA-jpvv-r467-5p4w.
 - CI checks out the repository with `persist-credentials: false`.
 
 ### Added
@@ -33,7 +39,11 @@ All notable changes to this project are listed here. The format follows
 
 - `actions/checkout` and `actions/setup-node` are bumped to v7 and pinned to
   commit SHAs.
-- The test suite uses Vitest 5.
+- Playwright 1.65.0 and the `playwright:v1.65.0-noble` base image, which
+  runs Node.js 26 in the container.
+- Dependencies: better-sqlite3 13.1.1, express-rate-limit 8.7.4, jose 6.2.17,
+  turndown 7.2.5.
+- The test suite uses Vitest 5.1, and CI runs it on Node.js 22, 24, and 26.
 - Dependabot ignores TypeScript major updates.
 - The Quadlet install comment now includes `mkdir -p` and
   `loginctl enable-linger`.
