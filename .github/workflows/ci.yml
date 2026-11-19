@@ -12,6 +12,11 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # Supported majors (engines); the image runs the base image's Node.
+        node: ["22", "24", "26"]
     env:
       # Tests use the pinned Chrome for Testing build, not Playwright's download.
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
@@ -22,7 +27,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24"
+          node-version: ${{ matrix.node }}
           cache: npm
       - name: Containerfile uses the Playwright image matching package.json
         run: |
@@ -37,7 +42,7 @@ jobs:
           [ -n "$pinned" ] && [ -n "$bundled" ] \
             || { echo "::error file=Containerfile::cannot read CHROME_VERSION or the bundled Chromium version"; exit 1; }
           if [ "$(printf '%s\n%s\n' "$pinned" "$bundled" | sort -V | tail -n1)" = "$bundled" ]; then
-            echo "::error file=Containerfile::Playwright bundles Chromium $bundled, pin is $pinned. If Chrome stable is newer than $bundled, bump CHROME_VERSION and CHROME_SHA256; otherwise remove the Chrome for Testing override (see the Containerfile comment)."
+            echo "::error file=Containerfile::Playwright bundles Chromium $bundled, pin is $pinned. Remove the Chrome for Testing override only if $bundled is a stable-channel build at least as new as Chrome stable; otherwise keep it (bump CHROME_VERSION and CHROME_SHA256 if stable is newer) and hold the Playwright bump. See the Containerfile comment."
             exit 1
           fi
       - run: npm run build

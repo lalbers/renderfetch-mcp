@@ -2,30 +2,32 @@
 # (Ubuntu 24.04 "noble" / glibc). This base provides the system libraries for
 # Chromium (the browser itself is the pinned build below) AND a glibc runtime, which the native modules (better-sqlite3,
 # onnxruntime-node) require. Alpine/musl is not viable for Playwright Chromium
-# or onnxruntime-node. The tag is pinned to match the `playwright` npm version.
+# or onnxruntime-node. The tag is pinned to match the `playwright` npm version
+# and also fixes the image's Node.js major (26 for v1.65.0).
 
-FROM mcr.microsoft.com/playwright:v1.64.1-noble AS build
+FROM mcr.microsoft.com/playwright:v1.65.0-noble AS build
 WORKDIR /app
 ENV NODE_ENV=development
 # Build tools so any native module without a matching prebuilt binary can compile.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 make g++ ca-certificates curl unzip \
  && rm -rf /var/lib/apt/lists/*
-# Playwright 1.64.1 bundles Chromium 156.0.8078.4. It lacks the security fixes
-# Chrome shipped since then: CVE-2026-118306 and three others in 156.0.8078.73,
-# and those in 157.0.8103.38 (2026-11-03); Chrome for Testing publishes no 156
-# build with the latter (latest 156.0.8078.80). Until a Playwright release
-# bundles a current build, the image runs the stable Chrome for Testing
-# headless shell, pinned by version and SHA-256.
+# Playwright's bundled Chromium trails Chrome's security releases: 1.65.0
+# bundles 158.0.8127.18, while NVD names 158.0.8127.36 as the first fixed
+# version for the Chrome 158 security fixes (see CHANGELOG). The image
+# therefore runs the stable Chrome for Testing headless shell, pinned by
+# version and SHA-256.
 # .github/workflows/chrome-pin.yml fails when Chrome stable moves past the pin;
 # bump both ARGs then. CI fails when the bundled build is at least the pinned
-# version. If Chrome stable is no newer than the bundled build at that point,
-# remove the override: this block and `curl unzip` above, the ENV and the
-# rm/ls check in the runtime stage, chrome-pin.yml, and in ci.yml the two
-# Chrome for Testing steps and PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD (go back to
+# version. Remove the override only if the bundled build is a stable-channel
+# build at least as new as Chrome stable; otherwise keep it and hold the
+# Playwright bump (1.65.1 was skipped because it bundles beta 159). Removing
+# means: this block and `curl unzip` above, the ENV and the rm/ls check in the
+# runtime stage, chrome-pin.yml, and in ci.yml the two Chrome for Testing steps
+# and PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD (go back to
 # `npx playwright install --with-deps chromium`).
-ARG CHROME_VERSION=157.0.8103.50
-ARG CHROME_SHA256=7bf0d41e424efd1d6281c4162993ab9dc5de92fac213c211614905a71c057d0f
+ARG CHROME_VERSION=158.0.8127.36
+ARG CHROME_SHA256=2d3a23017323c54fd457a678e4351f895c4076d8050e39d5aa6247f93448b73a
 RUN curl -fsSL -o /tmp/chrome-headless-shell.zip \
       "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-headless-shell-linux64.zip" \
  && echo "${CHROME_SHA256}  /tmp/chrome-headless-shell.zip" | sha256sum -c - \
@@ -39,7 +41,7 @@ COPY src ./src
 RUN npm run build \
  && npm prune --omit=dev
 
-FROM mcr.microsoft.com/playwright:v1.64.1-noble AS runtime
+FROM mcr.microsoft.com/playwright:v1.65.0-noble AS runtime
 WORKDIR /app
 ENV NODE_ENV=production \
     NODE_OPTIONS=--enable-source-maps \
