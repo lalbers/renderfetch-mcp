@@ -8,6 +8,15 @@ All notable changes to this project are listed here. The format follows
 
 ### Security
 
+- Strict mode now also screens text past the 50,000 characters that the
+  `@stackone/defender` regex tier reads per input, in overlapping windows
+  (16,000 characters, 4,000 overlap) over the raw and normalized text and a
+  compact copy without combining marks and control codes. Before, an
+  injection that only the defender detects passed when it sat behind a long
+  filler. A match spanning more than 4,000 characters, and count-based
+  escalation across windows, are still not guaranteed. The windows share a
+  time budget, past which the page is withheld. Found in a code audit on
+  2026-10-31.
 - The container image runs the Chrome for Testing headless shell
   158.0.8127.88 instead of Playwright's bundled Chromium, which trails Chrome
   security releases. Playwright 1.64.1 bundled 156.0.8078.4, without the fixes
@@ -31,6 +40,8 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- `FILTER_REGEX_BUDGET_MS` (default 8000) bounds the regex windows on text
+  longer than 50,000 characters; past it the page is withheld.
 - `CHROMIUM_EXECUTABLE_PATH` selects the browser binary. Outside the image,
   empty keeps Playwright's bundled Chromium; the image sets it, so leave it
   unset there.
