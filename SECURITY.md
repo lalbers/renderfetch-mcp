@@ -50,7 +50,19 @@ a rejected POST can leave a page incomplete.
   values) before extraction, in every format. Content hidden through
   stylesheets or classes can remain in the extracted text.
 - The whole bounded document, the title, and the source URL are screened
-  before truncation. Unicode is normalized before matching.
+  before truncation. Unicode is normalized before matching. The
+  `@stackone/defender` regex tier reads only 50,000 characters per input, so
+  longer text also goes through it in overlapping windows (16,000
+  characters, 4,000 overlap): the raw and normalized text after 46,000
+  characters and, from its start, a compact copy without combining marks,
+  escape sequences, and control codes. A match longer than 4,000 characters
+  can still be missed, and count-based risk escalation applies per window.
+  The windows share `FILTER_REGEX_BUDGET_MS` (default 8,000 ms); past it the
+  page is withheld. A benign 2-million-character page needs about 0.6 to
+  1.5 s of it on a fast CPU, so raise it on slow or busy hosts. The full-input pass has
+  no deadline: crafted text can block the event loop for minutes, as it could
+  before the windows. The windows add at most the budget plus one window, and
+  one crafted window can take about 15 s.
 - The title and the source URL appear only inside a random untrusted-content
   envelope. Structured metadata outside it is server-generated and has no
   page strings.
@@ -68,7 +80,7 @@ a rejected POST can leave a page incomplete.
   ML screening caps at 4; a timed-out call keeps its slot until inference
   finishes. Oversized input, a timeout, an incomplete result, a failed
   init, or a further call while 4 are running (rejected, not queued)
-  withholds the text. Regex layers have no deadline.
+  withholds the text. The full-input regex pass has no deadline.
 - Screenshots are opt-in. Text preflight misses some visual instructions and
   later text.
 

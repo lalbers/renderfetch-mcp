@@ -70,6 +70,8 @@ export const ConfigSchema = z.object({
   MCP_MAX_SESSIONS_PER_CLIENT: intEnv(10, 1, 1000),
   FILTER_MODE: z.enum(['strict', 'lenient']).default('strict'),
   FILTER_TIER2: boolEnv(false),
+  // Time for the regex windows past 50,000 characters; past it the page is withheld.
+  FILTER_REGEX_BUDGET_MS: intEnv(8000, 500, 120000),
   NAV_TIMEOUT_MS: intEnv(30000, 100, 120000),
   DEFAULT_WAIT_MS: intEnv(0, 0, 60000),
   BROWSER_CONCURRENCY: intEnv(4, 1, 16),

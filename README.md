@@ -153,6 +153,7 @@ All settings are environment variables, documented in [`.env.example`](.env.exam
 | `OAUTH_ONLY` | `true` disables the static bearer |
 | `FILTER_MODE` | `strict` blocks high and critical risk. `lenient` returns that text in the same untrusted envelope; risk level is only in `structuredContent.filter.risk_level`. Medium-risk matches return in both modes. A detector failure withholds content in both modes |
 | `FILTER_TIER2` | optional ML classifier, off by default. If initialization fails, the server does not start |
+| `FILTER_REGEX_BUDGET_MS` | default `8000`. Time for the regex windows when the raw or normalized text exceeds 50,000 characters; past it the page is withheld. Raise it on slow hosts |
 | `FETCH_ALLOWED_PORTS` | destination ports, default `80,443` |
 | `FETCH_ALLOW_PRIVATE` | relaxes the address check only. Schemes, URL credentials, and ports still apply. Leave it off on a public server |
 | `ALLOWED_ORIGINS` | extra exact browser origins (MCP Inspector, for example). This origin is always allowed. A missing `Origin` is allowed for non-browser clients |
