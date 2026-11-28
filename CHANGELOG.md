@@ -9,7 +9,7 @@ All notable changes to this project are listed here. The format follows
 ### Security
 
 - The container image runs the Chrome for Testing headless shell
-  158.0.8127.36 instead of Playwright's bundled Chromium, which trails Chrome
+  158.0.8127.88 instead of Playwright's bundled Chromium, which trails Chrome
   security releases. Playwright 1.64.1 bundled 156.0.8078.4, without the fixes
   for CVE-2026-118306 (critical, code execution outside the sandbox),
   CVE-2026-118331, CVE-2026-118344, and CVE-2026-118348 from Chrome
@@ -17,8 +17,9 @@ All notable changes to this project are listed here. The format follows
   203 entries), including critical ones such as CVE-2026-121035, code
   execution outside the sandbox. Playwright 1.65.0 bundles 158.0.8127.18,
   while NVD names 158.0.8127.36 as the first fixed version for the Chrome 158
-  fixes. The build is pinned by version and SHA-256, and the bundled Chromium
-  is deleted from the image filesystem. Rebuild the image to pick it up.
+  fixes; 158.0.8127.88 adds the fix for CVE-2026-134401 (critical). The build
+  is pinned by version and SHA-256, and the bundled Chromium is deleted from
+  the image filesystem. Rebuild the image to pick it up.
 - CI runs the real-browser tests against the pinned Chrome for Testing build
   and fails once Playwright bundles a Chromium at least as new as the pin. A
   daily `chrome-pin` workflow fails when Chrome stable moves past the pin.
@@ -41,8 +42,10 @@ All notable changes to this project are listed here. The format follows
   commit SHAs.
 - Playwright 1.65.0 and the `playwright:v1.65.0-noble` base image, which
   runs Node.js 26 in the container.
-- Dependencies: better-sqlite3 13.1.1, express-rate-limit 8.7.4, jose 6.2.17,
-  turndown 7.2.5.
+- Dependencies: @stackone/defender 0.9.6 (renderfetch's strict-mode block
+  decisions are unchanged), better-sqlite3 13.2.0, express-rate-limit 8.7.4,
+  jose 6.2.18, turndown 7.2.5, jsdom 31 (same extraction and sanitizer output
+  as jsdom 30 on scripts, stylesheets, and hidden content).
 - The test suite uses Vitest 5.1, and CI runs it on Node.js 22, 24, and 26.
 - Dependabot ignores TypeScript major updates.
 - The Quadlet install comment now includes `mkdir -p` and
