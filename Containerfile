@@ -26,8 +26,8 @@ RUN apt-get update \
 # runtime stage, chrome-pin.yml, and in ci.yml the two Chrome for Testing steps
 # and PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD (go back to
 # `npx playwright install --with-deps chromium`).
-ARG CHROME_VERSION=158.0.8127.36
-ARG CHROME_SHA256=2d3a23017323c54fd457a678e4351f895c4076d8050e39d5aa6247f93448b73a
+ARG CHROME_VERSION=158.0.8127.88
+ARG CHROME_SHA256=63401333cc587645bfaeea7f0c90958b327d249251e23954a47f30112ca23d5b
 RUN curl -fsSL -o /tmp/chrome-headless-shell.zip \
       "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-headless-shell-linux64.zip" \
  && echo "${CHROME_SHA256}  /tmp/chrome-headless-shell.zip" | sha256sum -c - \
